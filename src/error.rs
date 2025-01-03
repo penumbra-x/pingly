@@ -27,4 +27,7 @@ pub enum Error {
 
     #[error(transparent)]
     RcgenError(#[from] rcgen::Error),
+
+    #[error(transparent)]
+    JoinError(#[from] tokio::task::JoinError),
 }

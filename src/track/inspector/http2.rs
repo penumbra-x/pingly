@@ -2,6 +2,7 @@
 use crate::track::TlsInspector;
 use httlib_hpack::Decoder;
 use serde::{Serialize, Serializer};
+use std::ops::Deref;
 use std::pin::Pin;
 use std::task;
 use std::task::Poll;
@@ -118,9 +119,9 @@ where
     }
 }
 
-const FRAME_HEADER_LEN: usize = 9;
-
 fn parse_frame(data: &[u8]) -> (usize, Option<Http2Frame>) {
+    const FRAME_HEADER_LEN: usize = 9;
+
     if data.len() < FRAME_HEADER_LEN {
         return (0, None);
     }
@@ -210,13 +211,16 @@ pub struct HeadersFrame {
     pub priority: Option<Priority>,
 }
 
-const END_STREAM: u8 = 0x1;
-const END_HEADERS: u8 = 0x4;
-const PADDED: u8 = 0x8;
-const PRIORITY: u8 = 0x20;
-
 #[derive(Debug)]
 pub struct HeadersFlag(u8);
+
+impl Deref for HeadersFlag {
+    type Target = u8;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
 
 /// Custom Serialize for HeadersFlag
 impl Serialize for HeadersFlag {
@@ -224,6 +228,11 @@ impl Serialize for HeadersFlag {
     where
         S: Serializer,
     {
+        const END_STREAM: u8 = 0x1;
+        const END_HEADERS: u8 = 0x4;
+        const PADDED: u8 = 0x8;
+        const PRIORITY: u8 = 0x20;
+
         let mut flags = Vec::new();
 
         if self.0 & END_STREAM != 0 {
@@ -280,6 +289,7 @@ impl TryFrom<(u32, &[u8])> for SettingsFrame {
                 Setting::from((id, value))
             })
             .collect();
+
         Ok(SettingsFrame {
             frame_type: FrameType::Settings,
             settings,
