@@ -2,10 +2,12 @@ mod cert;
 mod route;
 mod signal;
 
+use std::net::SocketAddr;
 use std::{str::FromStr, time::Duration};
 
-use crate::config::Config;
 use crate::Result;
+use crate::{config::Config, track::TrackAcceptor};
+use axum::routing::get;
 use axum::Router;
 use axum_server::{tls_rustls::RustlsConfig, Handle};
 use tower::limit::ConcurrencyLimitLayer;
@@ -50,6 +52,7 @@ pub async fn run(config: Config) -> Result<()> {
         .layer(ConcurrencyLimitLayer::new(config.concurrent));
 
     let router = Router::new()
+        .route("/api/http2", get(route::http2_frames))
         .fallback(route::manual_hello)
         .layer(global_layer);
 
@@ -80,7 +83,8 @@ pub async fn run(config: Config) -> Result<()> {
 
     server
         .handle(handle)
-        .serve(router.into_make_service())
+        .map(TrackAcceptor::new)
+        .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .map_err(Into::into)
 }

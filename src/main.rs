@@ -5,6 +5,7 @@ mod config;
 mod daemon;
 mod error;
 mod serve;
+mod track;
 
 use clap::{Parser, Subcommand};
 use config::Config;
