@@ -1,6 +1,7 @@
 #![allow(unused)]
 use crate::track::TlsInspector;
 use httlib_hpack::Decoder;
+use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use std::ops::Deref;
 use std::pin::Pin;
@@ -216,11 +217,24 @@ pub struct PriorityFrame {
     pub priority: Priority,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug)]
 pub struct Priority {
-    pub weight: u32,
+    pub weight: u8,
     pub depends_on: u32,
-    pub exclusive: u8,
+    pub exclusive: bool,
+}
+
+impl Serialize for Priority {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut state = serializer.serialize_struct("Priority", 3)?;
+        state.serialize_field("weight", &(self.weight as u16 + 1))?;
+        state.serialize_field("depends_on", &self.depends_on)?;
+        state.serialize_field("exclusive", &self.exclusive)?;
+        state.end()
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -407,11 +421,11 @@ impl Priority {
             let mut ubuf = [0; 4];
             ubuf.copy_from_slice(&buf[0..4]);
             let unpacked = u32::from_be_bytes(ubuf);
-            let flag = unpacked & STREAM_ID_MASK == STREAM_ID_MASK;
+            let exclusive = unpacked & STREAM_ID_MASK == STREAM_ID_MASK;
 
             // Now clear the most significant bit, as that is reserved and MUST be
             // ignored when received.
-            (buf[4] as u32 + 1, unpacked & !STREAM_ID_MASK, flag as u8)
+            (buf[4], unpacked & !STREAM_ID_MASK, exclusive)
         };
 
         Ok(Priority {

@@ -128,8 +128,6 @@ fn parse_client_hello(bytes: &[u8]) -> Option<()> {
     None
 }
 
-
-
 /// Find the signature name from the value
 #[allow(unused)]
 #[inline]
