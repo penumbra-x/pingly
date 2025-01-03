@@ -2,7 +2,7 @@ mod cert;
 mod route;
 mod signal;
 
-use std::str::FromStr;
+use std::{str::FromStr, time::Duration};
 
 use crate::config::Config;
 use crate::Result;
@@ -28,6 +28,7 @@ pub async fn run(config: Config) -> Result<()> {
     tracing::info!("OS: {}", std::env::consts::OS);
     tracing::info!("Arch: {}", std::env::consts::ARCH);
     tracing::info!("Version: {}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Keep alive: {}s", config.keep_alive_timeout);
     tracing::info!("Concurrent limit: {}", config.concurrent);
     tracing::info!("Bind address: {}", config.bind);
 
@@ -69,7 +70,13 @@ pub async fn run(config: Config) -> Result<()> {
 
     // Use TLS configuration to create a secure server
     let mut server = axum_server::bind_rustls(config.bind, tls_config);
-    server.http_builder().http1().preserve_header_case(true);
+    server
+        .http_builder()
+        .http1()
+        .title_case_headers(true)
+        .preserve_header_case(true)
+        .http2()
+        .keep_alive_timeout(Duration::from_secs(config.keep_alive_timeout));
 
     server
         .handle(handle)
