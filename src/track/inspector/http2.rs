@@ -6,9 +6,30 @@ use std::ops::Deref;
 use std::pin::Pin;
 use std::task;
 use std::task::Poll;
+use std::time::Duration;
 use std::{io::IoSlice, sync::Arc};
 use tokio::io::{self, AsyncRead, AsyncWrite, ReadBuf};
+use tokio::time::Instant;
 use tokio_rustls::server::TlsStream;
+
+pub struct Http2Frame {
+    inner: boxcar::Vec<Frame>,
+    now: Instant,
+}
+
+impl Http2Frame {
+    pub fn elapsed(&self) -> Duration {
+        self.now.elapsed()
+    }
+}
+
+impl Deref for Http2Frame {
+    type Target = boxcar::Vec<Frame>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
 
 pin_project_lite::pin_project! {
     pub struct Http2Inspector<I> {
@@ -16,7 +37,7 @@ pin_project_lite::pin_project! {
         inner: TlsStream<TlsInspector<I>>,
 
         buf: Vec<u8>,
-        http2_frames: Arc<boxcar::Vec<Http2Frame>>,
+        http2_frames: Arc<Http2Frame>,
     }
 }
 
@@ -28,13 +49,16 @@ where
         Self {
             inner,
             buf: Vec::new(),
-            http2_frames: Arc::new(boxcar::Vec::new()),
+            http2_frames: Arc::new(Http2Frame {
+                inner: boxcar::Vec::new(),
+                now: Instant::now(),
+            }),
         }
     }
 
     #[inline]
     #[must_use]
-    pub fn frames(&self) -> Arc<boxcar::Vec<Http2Frame>> {
+    pub fn frames(&self) -> Arc<Http2Frame> {
         self.http2_frames.clone()
     }
 }
@@ -59,10 +83,10 @@ where
         let not_http2 = me.buf.len() >= plen && !me.buf.starts_with(HTTP2_PREFACE);
         if !not_http2 {
             me.buf.extend(&buf.filled()[len..]);
-            let frames = me.http2_frames;
+            let frames = &me.http2_frames.inner;
             while me.buf.len() > plen {
                 let last = frames.iter().last().map(|f| f.1);
-                if matches!(last, Some(Http2Frame::Headers(_))) {
+                if matches!(last, Some(Frame::Headers(_))) {
                     break;
                 }
                 let (frame_len, frame) = parse_frame(&me.buf[plen..]);
@@ -119,7 +143,7 @@ where
     }
 }
 
-fn parse_frame(data: &[u8]) -> (usize, Option<Http2Frame>) {
+fn parse_frame(data: &[u8]) -> (usize, Option<Frame>) {
     const FRAME_HEADER_LEN: usize = 9;
 
     if data.len() < FRAME_HEADER_LEN {
@@ -140,7 +164,7 @@ fn parse_frame(data: &[u8]) -> (usize, Option<Http2Frame>) {
 
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
-pub enum Http2Frame {
+pub enum Frame {
     Settings(SettingsFrame),
     WindowUpdate(WindowUpdateFrame),
     Priority(PriorityFrame),
@@ -254,7 +278,7 @@ impl Serialize for HeadersFlag {
 
 /// ====== impl Http2Frame ======
 
-impl TryFrom<(u8, u8, u32, &[u8])> for Http2Frame {
+impl TryFrom<(u8, u8, u32, &[u8])> for Frame {
     type Error = ();
 
     fn try_from((ty, flags, stream_id, payload): (u8, u8, u32, &[u8])) -> Result<Self, ()> {
@@ -262,15 +286,11 @@ impl TryFrom<(u8, u8, u32, &[u8])> for Http2Frame {
             return Err(());
         }
         match ty {
-            0x1 => (flags, stream_id, payload)
-                .try_into()
-                .map(Http2Frame::Headers),
-            0x2 => (stream_id, payload).try_into().map(Http2Frame::Priority),
-            0x4 => (stream_id, payload).try_into().map(Http2Frame::Settings),
-            0x8 => (stream_id, payload)
-                .try_into()
-                .map(Http2Frame::WindowUpdate),
-            _ => Ok(Http2Frame::Unknown(ty)),
+            0x1 => (flags, stream_id, payload).try_into().map(Frame::Headers),
+            0x2 => (stream_id, payload).try_into().map(Frame::Priority),
+            0x4 => (stream_id, payload).try_into().map(Frame::Settings),
+            0x8 => (stream_id, payload).try_into().map(Frame::WindowUpdate),
+            _ => Ok(Frame::Unknown(ty)),
         }
     }
 }

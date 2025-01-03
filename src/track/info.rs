@@ -1,23 +1,23 @@
-use super::Http2Frame;
+use super::{inspector::Frame, Http2Frame};
 use serde::{Serialize, Serializer};
 use std::sync::Arc;
 
-#[derive(Debug, Serialize)]
+#[derive(Serialize)]
 pub struct Http2TrackInfo {
-    pub akamai_fingerprint: String,
-
-    pub akamai_fingerprint_hash: String,
-
-    pub full_akamai_fingerprint: String,
-
-    pub full_akamai_fingerprint_hash: String,
+    track_time: String,
+    akamai_fingerprint: String,
+    akamai_fingerprint_hash: String,
+    full_akamai_fingerprint: String,
+    full_akamai_fingerprint_hash: String,
 
     #[serde(serialize_with = "serialize_sent_frames")]
-    pub sent_frames: Arc<boxcar::Vec<Http2Frame>>,
+    sent_frames: Arc<Http2Frame>,
 }
 
 impl Http2TrackInfo {
-    pub fn new(sent_frames: Arc<boxcar::Vec<Http2Frame>>) -> Self {
+    pub fn new(sent_frames: Arc<Http2Frame>) -> Http2TrackInfo {
+        let now = sent_frames.elapsed();
+
         let (akamai_fingerprint, full_akamai_fingerprint) =
             compute_akamai_fingerprint(&sent_frames);
 
@@ -26,6 +26,7 @@ impl Http2TrackInfo {
             compute_akamai_fingerprint_hash(&full_akamai_fingerprint);
 
         Self {
+            track_time: format!("{now:?}"),
             akamai_fingerprint,
             akamai_fingerprint_hash,
             full_akamai_fingerprint,
@@ -47,7 +48,7 @@ fn compute_akamai_fingerprint_hash(akamai_fingerprint: &str) -> String {
 /// It is used to identify the client and the server.
 ///
 /// Return example: 1:65536;4:131072;5:16384|12517377|3:0:0:201,5:0:0:101,7:0:0:1,9:0:7:1,11:0:3:1,13:0:0:241|m,p,a,s
-fn compute_akamai_fingerprint(sent_frames: &Arc<boxcar::Vec<Http2Frame>>) -> (String, String) {
+fn compute_akamai_fingerprint(sent_frames: &Arc<Http2Frame>) -> (String, String) {
     let mut setting_group = Vec::new();
     let mut window_update_group = None;
     let mut priority_group = None;
@@ -56,16 +57,16 @@ fn compute_akamai_fingerprint(sent_frames: &Arc<boxcar::Vec<Http2Frame>>) -> (St
 
     for (_, frame) in sent_frames.iter() {
         match frame {
-            Http2Frame::Settings(frame) => {
+            Frame::Settings(frame) => {
                 for setting in &frame.settings {
                     let (id, value) = setting.value();
                     setting_group.push(format!("{id}:{value}"));
                 }
             }
-            Http2Frame::WindowUpdate(frame) => {
+            Frame::WindowUpdate(frame) => {
                 window_update_group = Some(frame.increment);
             }
-            Http2Frame::Priority(frame) => {
+            Frame::Priority(frame) => {
                 let priority_group = priority_group.get_or_insert_with(Vec::new);
                 priority_group.push(format!(
                     "{}:{}:{}:{}",
@@ -75,7 +76,7 @@ fn compute_akamai_fingerprint(sent_frames: &Arc<boxcar::Vec<Http2Frame>>) -> (St
                     frame.priority.weight
                 ));
             }
-            Http2Frame::Headers(frame) => {
+            Frame::Headers(frame) => {
                 let pseudo_headers = frame.pseudo_headers.join(",");
                 headers_group.push_str(&pseudo_headers);
 
@@ -89,7 +90,7 @@ fn compute_akamai_fingerprint(sent_frames: &Arc<boxcar::Vec<Http2Frame>>) -> (St
                     ));
                 }
             }
-            Http2Frame::Unknown(v) => {
+            Frame::Unknown(v) => {
                 tracing::trace!("Unknown http2 frame: {:?}", v);
             }
         }
@@ -120,10 +121,7 @@ fn compute_akamai_fingerprint(sent_frames: &Arc<boxcar::Vec<Http2Frame>>) -> (St
     )
 }
 
-fn serialize_sent_frames<S>(
-    sent_frames: &Arc<boxcar::Vec<Http2Frame>>,
-    serializer: S,
-) -> Result<S::Ok, S::Error>
+fn serialize_sent_frames<S>(sent_frames: &Arc<Http2Frame>, serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {

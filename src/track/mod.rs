@@ -9,13 +9,13 @@ use std::sync::Arc;
 
 /// ConnectTrack
 /// Wrapper for tls and http2 settings
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ConnectTrack {
-    http2_frames: Arc<boxcar::Vec<Http2Frame>>,
+    http2_frames: Arc<Http2Frame>,
 }
 
 impl ConnectTrack {
-    pub fn new(http2_frames: Arc<boxcar::Vec<Http2Frame>>) -> Self {
+    pub fn new(http2_frames: Arc<Http2Frame>) -> Self {
         Self { http2_frames }
     }
 
