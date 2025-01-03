@@ -71,9 +71,9 @@ fn compute_akamai_fingerprint(sent_frames: &Arc<Http2Frame>) -> (String, String)
                 priority_group.push(format!(
                     "{}:{}:{}:{}",
                     frame.stream_id,
-                    frame.priority.exclusive,
+                    frame.priority.exclusive as u8,
                     frame.priority.depends_on,
-                    frame.priority.weight
+                    frame.priority.weight as u16 + 1
                 ));
             }
             Frame::Headers(frame) => {
@@ -86,7 +86,9 @@ fn compute_akamai_fingerprint(sent_frames: &Arc<Http2Frame>) -> (String, String)
                 if let Some(ref priority) = frame.priority {
                     full_headers_group.push(format!(
                         "{}:{}:{}",
-                        priority.exclusive, priority.depends_on, priority.weight
+                        priority.exclusive as u8,
+                        priority.depends_on,
+                        priority.weight as u16 + 1
                     ));
                 }
             }
