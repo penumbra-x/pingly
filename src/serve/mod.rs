@@ -1,5 +1,8 @@
+mod cert;
 mod route;
 mod signal;
+
+use std::str::FromStr;
 
 use crate::config::Config;
 use crate::Result;
@@ -15,11 +18,18 @@ use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
 #[tokio::main]
 pub async fn run(config: Config) -> Result<()> {
-    // init logger
-    init_logger(config.debug)?;
+    tracing::subscriber::set_global_default(
+        FmtSubscriber::builder()
+            .with_env_filter(EnvFilter::from_default_env())
+            .with_max_level(Level::from_str(&config.log).unwrap_or(Level::INFO))
+            .finish(),
+    )?;
 
-    // init boot message
-    boot_message(&config);
+    tracing::info!("OS: {}", std::env::consts::OS);
+    tracing::info!("Arch: {}", std::env::consts::ARCH);
+    tracing::info!("Version: {}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Concurrent limit: {}", config.concurrent);
+    tracing::info!("Bind address: {}", config.bind);
 
     // init global layer provider
     let global_layer = tower::ServiceBuilder::new()
@@ -48,54 +58,22 @@ pub async fn run(config: Config) -> Result<()> {
     // Spawn a task to gracefully shutdown server.
     tokio::spawn(signal::graceful_shutdown(handle.clone()));
 
-    // Run http server
-    match (config.tls_cert.as_ref(), config.tls_key.as_ref()) {
-        (Some(cert), Some(key)) => {
-            // Load TLS configuration
-            let tls_config = RustlsConfig::from_pem_chain_file(cert, key).await?;
-
-            // Use TLS configuration to create a secure server
-            let mut server = axum_server::bind_rustls(config.bind, tls_config);
-            server.http_builder().http1().preserve_header_case(true);
-
-            server
-                .handle(handle)
-                .serve(router.into_make_service())
-                .await
-        }
+    // Load TLS configuration
+    let tls_config = match (config.tls_cert.as_ref(), config.tls_key.as_ref()) {
+        (Some(cert), Some(key)) => RustlsConfig::from_pem_chain_file(cert, key).await,
         _ => {
-            // No TLS configuration, create a non-secure server
-            let mut server = axum_server::bind(config.bind);
-            server.http_builder().http1().preserve_header_case(true);
-
-            server
-                .handle(handle)
-                .serve(router.into_make_service())
-                .await
+            let (cert, key) = cert::generate_self_signed()?;
+            RustlsConfig::from_pem(cert, key).await
         }
-    }
-    .map_err(Into::into)
-}
+    }?;
 
-/// Print boot info message
-fn boot_message(config: &Config) {
-    // Server info
-    tracing::info!("OS: {}", std::env::consts::OS);
-    tracing::info!("Arch: {}", std::env::consts::ARCH);
-    tracing::info!("Version: {}", env!("CARGO_PKG_VERSION"));
-    tracing::info!("Concurrent limit: {}", config.concurrent);
-    tracing::info!("Bind address: {}", config.bind);
-}
+    // Use TLS configuration to create a secure server
+    let mut server = axum_server::bind_rustls(config.bind, tls_config);
+    server.http_builder().http1().preserve_header_case(true);
 
-/// Initialize the logger with a filter that ignores WARN level logs for netlink_proto
-fn init_logger(debug: bool) -> Result<()> {
-    let filter = EnvFilter::from_default_env()
-        .add_directive(if debug { Level::DEBUG } else { Level::INFO }.into())
-        .add_directive("netlink_proto=error".parse()?);
-
-    tracing::subscriber::set_global_default(
-        FmtSubscriber::builder().with_env_filter(filter).finish(),
-    )?;
-
-    Ok(())
+    server
+        .handle(handle)
+        .serve(router.into_make_service())
+        .await
+        .map_err(Into::into)
 }

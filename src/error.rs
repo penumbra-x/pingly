@@ -24,4 +24,7 @@ pub enum Error {
 
     #[error(transparent)]
     HttpError(#[from] axum::http::Error),
+
+    #[error(transparent)]
+    RcgenError(#[from] rcgen::Error),
 }

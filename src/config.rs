@@ -4,8 +4,8 @@ use std::{net::SocketAddr, path::PathBuf};
 #[derive(Args, Clone)]
 pub struct Config {
     /// Debug mode
-    #[clap(long, env = "PINGLY_DEBUG")]
-    pub debug: bool,
+    #[clap(long, default_value = "info", env = "PINGLY_LOG")]
+    pub log: String,
 
     /// Bind address
     #[clap(short, long, default_value = "0.0.0.0:8181")]
