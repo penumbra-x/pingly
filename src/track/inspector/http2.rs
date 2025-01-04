@@ -469,7 +469,7 @@ impl TryFrom<(u8, u32, &[u8])> for HeadersFrame {
             return Err(());
         }
 
-        let mut headers = Vec::with_capacity(dst.len() - 4);
+        let mut headers = Vec::with_capacity(dst.len());
         let mut pseudo_headers = Vec::with_capacity(4);
         for (name, value, _) in dst {
             match name.as_slice() {
