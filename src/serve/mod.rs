@@ -1,6 +1,7 @@
 mod cert;
 mod route;
 mod signal;
+mod track;
 
 use std::net::SocketAddr;
 use std::{str::FromStr, time::Duration};
@@ -53,7 +54,6 @@ pub async fn run(config: Config) -> Result<()> {
 
     let router = Router::new()
         .route("/api/http2", get(route::http2_frames))
-        .fallback(route::manual_hello)
         .layer(global_layer);
 
     // Signal the server to shutdown using Handle.
