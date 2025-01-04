@@ -11,7 +11,7 @@ const DONATE_URL: &str = "TLS/HTTP2 tracking server written in Rust, Developed b
 #[derive(Serialize)]
 pub struct TrackInfo<'a> {
     donate: &'static str,
-    addr: SocketAddr,
+    socket_addr: SocketAddr,
     http_version: String,
     method: &'a str,
     user_agent: Option<&'a str>,
@@ -22,14 +22,14 @@ pub struct TrackInfo<'a> {
 impl<'a> TrackInfo<'a> {
     #[inline]
     pub fn new_http2_track(
-        addr: SocketAddr,
+        socket_addr: SocketAddr,
         http2: Http2TrackInfo,
         req: &'a Request<Body>,
     ) -> TrackInfo<'a> {
         let headers = req.headers();
         Self {
             donate: DONATE_URL,
-            addr,
+            socket_addr,
             http_version: format!("{:?}", req.version()),
             method: req.method().as_str(),
             user_agent: headers.get(USER_AGENT).and_then(|v| v.to_str().ok()),
