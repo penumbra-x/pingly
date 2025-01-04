@@ -46,8 +46,6 @@ fn compute_akamai_fingerprint_hash(akamai_fingerprint: &str) -> String {
 ///
 /// The Akamai fingerprint is a string of 16 bytes that is computed from the sent frames.
 /// It is used to identify the client and the server.
-///
-/// Return example: 1:65536;4:131072;5:16384|12517377|3:0:0:201,5:0:0:101,7:0:0:1,9:0:7:1,11:0:3:1,13:0:0:241|m,p,a,s
 fn compute_akamai_fingerprint(sent_frames: &Arc<Http2Frame>) -> (String, String) {
     let mut setting_group = Vec::new();
     let mut window_update_group = None;

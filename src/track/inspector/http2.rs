@@ -174,7 +174,6 @@ pub enum Frame {
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum FrameType {
     Settings,
     WindowUpdate,
@@ -189,7 +188,7 @@ pub struct SettingsFrame {
     pub settings: Vec<Setting>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Setting {
     HeaderTableSize(u16, u32),
     EnablePush(u16, u32),
@@ -296,9 +295,6 @@ impl TryFrom<(u8, u8, u32, &[u8])> for Frame {
     type Error = ();
 
     fn try_from((ty, flags, stream_id, payload): (u8, u8, u32, &[u8])) -> Result<Self, ()> {
-        if payload.is_empty() {
-            return Err(());
-        }
         match ty {
             0x1 => (flags, stream_id, payload).try_into().map(Frame::Headers),
             0x2 => (stream_id, payload).try_into().map(Frame::Priority),
@@ -315,6 +311,10 @@ impl TryFrom<(u32, &[u8])> for SettingsFrame {
     type Error = ();
 
     fn try_from((stream_id, payload): (u32, &[u8])) -> Result<Self, ()> {
+        if payload.is_empty() {
+            return Err(());
+        }
+
         let settings = payload
             .chunks_exact(6)
             .map(|data| {
@@ -344,31 +344,6 @@ impl From<(u16, u32)> for Setting {
             9 => Setting::NoRfc7540Priorities(id, value),
             _ => Setting::UnknownSetting(id, value),
         }
-    }
-}
-
-impl Serialize for Setting {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let value = match self {
-            Setting::HeaderTableSize(_, value) => format!("HEADER_TABLE_SIZE = {}", value),
-            Setting::EnablePush(_, value) => format!("ENABLE_PUSH = {}", value),
-            Setting::MaxConcurrentStreams(_, value) => {
-                format!("MAX_CONCURRENT_STREAMS = {}", value)
-            }
-            Setting::InitialWindowSize(_, value) => format!("INITIAL_WINDOW_SIZE = {}", value),
-            Setting::MaxFrameSize(_, value) => format!("MAX_FRAME_SIZE = {}", value),
-            Setting::MaxHeaderListSize(_, value) => format!("MAX_HEADER_LIST_SIZE = {}", value),
-            Setting::EnableConnectProtocol(_, value) => {
-                format!("ENABLE_CONNECT_PROTOCOL = {}", value)
-            }
-            Setting::NoRfc7540Priorities(_, value) => format!("NO_RFC7540_PRIORITIES = {}", value),
-            Setting::UnknownSetting(_, value) => format!("UNKNOWN_SETTING = {}", value),
-        };
-
-        serializer.serialize_str(&value)
     }
 }
 
@@ -519,14 +494,12 @@ impl TryFrom<(u8, u32, &[u8])> for HeadersFrame {
             headers.push(kv);
         }
 
-        let priority = {
-            if flags & 0x20 != 0 {
-                let buf = &payload[fragment_offset - 5..fragment_offset];
-                let priority = Priority::load(buf)?;
-                Some(priority)
-            } else {
-                None
-            }
+        let priority = if flags & 0x20 != 0 {
+            let buf = &payload[fragment_offset - 5..fragment_offset];
+            let priority = Priority::load(buf)?;
+            Some(priority)
+        } else {
+            None
         };
 
         let pseudo_headers = match pseudo_headers.try_into() {
