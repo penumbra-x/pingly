@@ -15,13 +15,6 @@ use tokio_rustls::server::TlsStream;
 
 pub struct Http2Frame {
     inner: boxcar::Vec<Frame>,
-    now: Instant,
-}
-
-impl Http2Frame {
-    pub fn elapsed(&self) -> Duration {
-        self.now.elapsed()
-    }
 }
 
 impl Deref for Http2Frame {
@@ -52,7 +45,6 @@ where
             buf: Vec::new(),
             http2_frames: Arc::new(Http2Frame {
                 inner: boxcar::Vec::new(),
-                now: Instant::now(),
             }),
         }
     }

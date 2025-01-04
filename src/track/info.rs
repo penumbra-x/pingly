@@ -4,7 +4,6 @@ use std::sync::Arc;
 
 #[derive(Serialize)]
 pub struct Http2TrackInfo {
-    track_time: String,
     akamai_fingerprint: String,
     akamai_fingerprint_hash: String,
 
@@ -14,12 +13,10 @@ pub struct Http2TrackInfo {
 
 impl Http2TrackInfo {
     pub fn new(sent_frames: Arc<Http2Frame>) -> Http2TrackInfo {
-        let track_time = format!("{:?}", sent_frames.elapsed());
         let akamai_fingerprint = compute_akamai_fingerprint(&sent_frames);
         let akamai_fingerprint_hash = compute_akamai_fingerprint_hash(&akamai_fingerprint);
 
         Self {
-            track_time,
             akamai_fingerprint,
             akamai_fingerprint_hash,
             sent_frames,
