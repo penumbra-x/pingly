@@ -3,6 +3,7 @@ use crate::track::TlsInspector;
 use httlib_hpack::Decoder;
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
+use std::fmt::Write;
 use std::ops::Deref;
 use std::pin::Pin;
 use std::task;
@@ -480,10 +481,14 @@ impl TryFrom<(u8, u32, &[u8])> for HeadersFrame {
                 _ => {}
             }
 
-            let mut kv = String::from_utf8(name).map_err(|_| ())?;
-            let value = String::from_utf8(value).map_err(|_| ())?;
-            kv.push_str(": ");
-            kv.push_str(&value);
+            let mut kv = String::with_capacity(name.len() + value.len() + 2);
+            write!(
+                &mut kv,
+                "{}: {}",
+                String::from_utf8_lossy(&name),
+                String::from_utf8_lossy(&value)
+            )
+            .map_err(|_| ())?;
             headers.push(kv);
         }
 
