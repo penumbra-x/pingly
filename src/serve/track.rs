@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::track::info::{Http1TrackInfo, Http2TrackInfo, TlsTrackInfo};
 
-const DONATE_URL: &str = "TLS/HTTP2 tracking server written in Rust, Developed by penumbra-x. https://github.com/penumbra-x/pingly";
+const DONATE_URL: &str = "Analysis server for TLS and HTTP/1/2/3, developed by 0x676e67: https://github.com/0x676e67/pingly";
 
 #[derive(Serialize)]
 pub struct TrackInfo<'a> {

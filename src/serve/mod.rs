@@ -1,11 +1,18 @@
 mod cert;
-mod route;
 mod signal;
 mod track;
 
 use std::{net::SocketAddr, str::FromStr, time::Duration};
 
-use axum::{routing::get, Router};
+use axum::{
+    body::Body,
+    extract::ConnectInfo,
+    http::{Request, StatusCode},
+    response::IntoResponse,
+    routing::get,
+    Extension, Router,
+};
+use axum_extra::response::ErasedJson;
 use axum_server::{tls_rustls::RustlsConfig, Handle};
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::{
@@ -15,7 +22,12 @@ use tower_http::{
 use tracing::Level;
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-use crate::{track::accept::TrackAcceptor, Args, Result};
+use crate::{
+    error::Error,
+    serve::track::TrackInfo,
+    track::{accept::TrackAcceptor, ConnectionTrack},
+    Args, Result,
+};
 
 #[tokio::main]
 pub async fn run(args: Args) -> Result<()> {
@@ -51,10 +63,10 @@ pub async fn run(args: Args) -> Result<()> {
         .layer(ConcurrencyLimitLayer::new(args.concurrent));
 
     let router = Router::new()
-        .route("/api/all", get(route::track))
-        .route("/api/tls", get(route::tls_track))
-        .route("/api/http1", get(route::http1_headers))
-        .route("/api/http2", get(route::http2_frames))
+        .route("/api/all", get(track))
+        .route("/api/tls", get(tls_track))
+        .route("/api/http1", get(http1_headers))
+        .route("/api/http2", get(http2_frames))
         .layer(global_layer);
 
     // Signal the server to shutdown using Handle.
@@ -85,4 +97,55 @@ pub async fn run(args: Args) -> Result<()> {
         .serve(router.into_make_service_with_connect_info::<SocketAddr>())
         .await
         .map_err(Into::into)
+}
+
+impl IntoResponse for Error {
+    fn into_response(self) -> axum::response::Response {
+        tracing::warn!("server track error: {}", self);
+        (StatusCode::INTERNAL_SERVER_ERROR).into_response()
+    }
+}
+
+#[inline]
+pub async fn track(
+    Extension(ConnectInfo(addr)): Extension<ConnectInfo<SocketAddr>>,
+    Extension(track): Extension<ConnectionTrack>,
+    req: Request<Body>,
+) -> Result<ErasedJson> {
+    let (tls, http1, http2) = tokio::task::spawn_blocking(move || track.into_track_info()).await?;
+    let info = TrackInfo::new(addr, &req, tls, http1, http2);
+    Ok(ErasedJson::pretty(info))
+}
+
+#[inline]
+pub async fn tls_track(
+    Extension(ConnectInfo(addr)): Extension<ConnectInfo<SocketAddr>>,
+    Extension(track): Extension<ConnectionTrack>,
+    req: Request<Body>,
+) -> Result<ErasedJson> {
+    let tls = tokio::task::spawn_blocking(move || track.into_tls_track_info()).await?;
+    let info = TrackInfo::new_tls_track(addr, tls, &req);
+    Ok(ErasedJson::pretty(info))
+}
+
+#[inline]
+pub async fn http1_headers(
+    Extension(ConnectInfo(addr)): Extension<ConnectInfo<SocketAddr>>,
+    Extension(track): Extension<ConnectionTrack>,
+    req: Request<Body>,
+) -> Result<ErasedJson> {
+    let http1 = tokio::task::spawn_blocking(move || track.into_http1_headers()).await?;
+    let info = TrackInfo::new_http1_track(addr, http1, &req);
+    Ok(ErasedJson::pretty(info))
+}
+
+#[inline]
+pub async fn http2_frames(
+    Extension(ConnectInfo(addr)): Extension<ConnectInfo<SocketAddr>>,
+    Extension(track): Extension<ConnectionTrack>,
+    req: Request<Body>,
+) -> Result<ErasedJson> {
+    let http2 = tokio::task::spawn_blocking(move || track.into_http2_track_info()).await?;
+    let info = TrackInfo::new_http2_track(addr, http2, &req);
+    Ok(ErasedJson::pretty(info))
 }
