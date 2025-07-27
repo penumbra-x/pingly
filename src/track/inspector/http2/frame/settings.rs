@@ -1,6 +1,6 @@
-use super::error::Error;
-use super::FrameType;
 use serde::{Serialize, Serializer};
+
+use super::{error::Error, FrameType};
 
 /// An enum that lists all valid settings that can be sent in a SETTINGS
 /// frame.

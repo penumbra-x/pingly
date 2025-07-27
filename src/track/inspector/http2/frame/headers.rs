@@ -1,9 +1,9 @@
-use super::error::Error;
-use httlib_hpack::Decoder;
-use serde::{Serialize, Serializer};
 use std::fmt::Write;
 
-use super::{priority::StreamDependency, FrameType};
+use httlib_hpack::Decoder;
+use serde::{Serialize, Serializer};
+
+use super::{error::Error, priority::StreamDependency, FrameType};
 
 /// Header frame
 ///

@@ -1,11 +1,13 @@
 pub mod frame;
 
-use crate::track::TlsInspector;
+use std::{ops::Deref, pin::Pin, sync::Arc, task, task::Poll};
+
 use frame::Frame;
 use pin_project_lite::pin_project;
-use std::{ops::Deref, pin::Pin, sync::Arc, task, task::Poll};
 use tokio::io::{self, AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::server::TlsStream;
+
+use crate::track::TlsInspector;
 
 pub type Http2Frame = Arc<boxcar::Vec<Frame>>;
 

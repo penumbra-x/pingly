@@ -1,6 +1,6 @@
-use super::error::Error;
-use super::FrameType;
 use serde::Serialize;
+
+use super::{error::Error, FrameType};
 
 /// Represents an HTTP/2 WINDOW_UPDATE frame.
 ///

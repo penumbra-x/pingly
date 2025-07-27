@@ -1,6 +1,6 @@
-use super::error::Error;
-use super::FrameType;
 use serde::Serialize;
+
+use super::{error::Error, FrameType};
 
 /// The PRIORITY frame (type=0x2) specifies the sender-advised priority
 /// of a stream [Section 5.3].  It can be sent in any stream state,

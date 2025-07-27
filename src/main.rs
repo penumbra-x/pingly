@@ -6,8 +6,9 @@ mod error;
 mod serve;
 mod track;
 
-use clap::{Parser, Subcommand};
 use std::{net::SocketAddr, path::PathBuf};
+
+use clap::{Parser, Subcommand};
 
 type Result<T, E = error::Error> = std::result::Result<T, E>;
 
