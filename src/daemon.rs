@@ -6,7 +6,7 @@ use std::{
 
 use daemonize::Daemonize;
 
-use crate::{config::Config, serve};
+use crate::{serve, Args};
 
 const PID_PATH: &str = "/var/run/pingly.pid";
 const DEFAULT_STDOUT_PATH: &str = "/var/run/pingly.out";
@@ -30,7 +30,7 @@ pub fn root() {
 }
 
 /// Start the daemon
-pub fn start(config: Config) -> crate::Result<()> {
+pub fn start(config: Args) -> crate::Result<()> {
     if let Some(pid) = get_pid() {
         println!("pingly is already running with pid: {}", pid);
         return Ok(());
@@ -92,7 +92,7 @@ pub fn stop() -> crate::Result<()> {
 }
 
 /// Restart the daemon
-pub fn restart(config: Config) -> crate::Result<()> {
+pub fn restart(config: Args) -> crate::Result<()> {
     stop()?;
     start(config)
 }
