@@ -25,6 +25,7 @@ impl TryFrom<&[u8]> for WindowUpdateFrame {
 
     fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
         if payload.len() != 4 {
+            tracing::debug!("Invalid WINDOW_UPDATE frame size: {}", payload.len());
             return Err(Error::BadFrameSize);
         }
 

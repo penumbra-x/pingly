@@ -1,4 +1,4 @@
-use serde::{Serialize, Serializer};
+use serde::Serialize;
 
 use super::{error::Error, FrameType};
 
@@ -6,17 +6,17 @@ use super::{error::Error, FrameType};
 /// frame.
 ///
 /// Each setting has a value that is a 32 bit unsigned integer (6.5.1.).
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 pub enum Setting {
-    HeaderTableSize(u16, u32),
-    EnablePush(u16, u32),
-    MaxConcurrentStreams(u16, u32),
-    InitialWindowSize(u16, u32),
-    MaxFrameSize(u16, u32),
-    MaxHeaderListSize(u16, u32),
-    EnableConnectProtocol(u16, u32),
-    NoRfc7540Priorities(u16, u32),
-    Unknown(u16, u32),
+    HeaderTableSize { id: u16, value: u32 },
+    EnablePush { id: u16, value: u32 },
+    MaxConcurrentStreams { id: u16, value: u32 },
+    InitialWindowSize { id: u16, value: u32 },
+    MaxFrameSize { id: u16, value: u32 },
+    MaxHeaderListSize { id: u16, value: u32 },
+    EnableConnectProtocol { id: u16, value: u32 },
+    NoRfc7540Priorities { id: u16, value: u32 },
+    Unknown { id: u16, value: u32 },
 }
 
 /// Representing a SETTINGS frame in HTTP/2.
@@ -32,15 +32,15 @@ pub struct SettingsFrame {
 impl From<(u16, u32)> for Setting {
     fn from((id, value): (u16, u32)) -> Self {
         match id {
-            1 => Setting::HeaderTableSize(id, value),
-            2 => Setting::EnablePush(id, value),
-            3 => Setting::MaxConcurrentStreams(id, value),
-            4 => Setting::InitialWindowSize(id, value),
-            5 => Setting::MaxFrameSize(id, value),
-            6 => Setting::MaxHeaderListSize(id, value),
-            8 => Setting::EnableConnectProtocol(id, value),
-            9 => Setting::NoRfc7540Priorities(id, value),
-            _ => Setting::Unknown(id, value),
+            1 => Setting::HeaderTableSize { id, value },
+            2 => Setting::EnablePush { id, value },
+            3 => Setting::MaxConcurrentStreams { id, value },
+            4 => Setting::InitialWindowSize { id, value },
+            5 => Setting::MaxFrameSize { id, value },
+            6 => Setting::MaxHeaderListSize { id, value },
+            8 => Setting::EnableConnectProtocol { id, value },
+            9 => Setting::NoRfc7540Priorities { id, value },
+            _ => Setting::Unknown { id, value },
         }
     }
 }
@@ -48,41 +48,16 @@ impl From<(u16, u32)> for Setting {
 impl Setting {
     pub fn value(&self) -> (u16, u32) {
         match self {
-            Setting::HeaderTableSize(id, value) => (*id, *value),
-            Setting::EnablePush(id, value) => (*id, *value),
-            Setting::MaxConcurrentStreams(id, value) => (*id, *value),
-            Setting::InitialWindowSize(id, value) => (*id, *value),
-            Setting::MaxFrameSize(id, value) => (*id, *value),
-            Setting::MaxHeaderListSize(id, value) => (*id, *value),
-            Setting::EnableConnectProtocol(id, value) => (*id, *value),
-            Setting::NoRfc7540Priorities(id, value) => (*id, *value),
-            Setting::Unknown(id, value) => (*id, *value),
+            Setting::HeaderTableSize { id, value } => (*id, *value),
+            Setting::EnablePush { id, value } => (*id, *value),
+            Setting::MaxConcurrentStreams { id, value } => (*id, *value),
+            Setting::InitialWindowSize { id, value } => (*id, *value),
+            Setting::MaxFrameSize { id, value } => (*id, *value),
+            Setting::MaxHeaderListSize { id, value } => (*id, *value),
+            Setting::EnableConnectProtocol { id, value } => (*id, *value),
+            Setting::NoRfc7540Priorities { id, value } => (*id, *value),
+            Setting::Unknown { id, value } => (*id, *value),
         }
-    }
-}
-
-impl Serialize for Setting {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let value = match self {
-            Setting::HeaderTableSize(_, value) => format!("HEADER_TABLE_SIZE = {value}"),
-            Setting::EnablePush(_, value) => format!("ENABLE_PUSH = {value}"),
-            Setting::MaxConcurrentStreams(_, value) => {
-                format!("MAX_CONCURRENT_STREAMS = {value}")
-            }
-            Setting::InitialWindowSize(_, value) => format!("INITIAL_WINDOW_SIZE = {value}"),
-            Setting::MaxFrameSize(_, value) => format!("MAX_FRAME_SIZE = {value}"),
-            Setting::MaxHeaderListSize(_, value) => format!("MAX_HEADER_LIST_SIZE = {value}"),
-            Setting::EnableConnectProtocol(_, value) => {
-                format!("ENABLE_CONNECT_PROTOCOL = {value}")
-            }
-            Setting::NoRfc7540Priorities(_, value) => format!("NO_RFC7540_PRIORITIES = {value}"),
-            Setting::Unknown(_, value) => format!("UNKNOWN_SETTING = {value}"),
-        };
-
-        serializer.serialize_str(&value)
     }
 }
 
@@ -93,6 +68,7 @@ impl TryFrom<&[u8]> for SettingsFrame {
 
     fn try_from(payload: &[u8]) -> Result<Self, Self::Error> {
         if payload.is_empty() {
+            tracing::debug!("Invalid SETTINGS frame size: {}", payload.len());
             return Err(Error::BadFrameSize);
         }
 
