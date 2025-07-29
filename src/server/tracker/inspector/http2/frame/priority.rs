@@ -64,6 +64,7 @@ impl TryFrom<&[u8]> for StreamDependency {
 
     fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
         if buf.len() != 5 {
+            tracing::debug!("Invalid PRIORITY frame size: {}", buf.len());
             return Err(Error::BadFrameSize);
         }
 

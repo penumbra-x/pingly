@@ -29,7 +29,7 @@ pub fn parse(data: &[u8]) -> (usize, Option<Frame>) {
     match Frame::try_from((ty, flags, stream_id, &payload[..length])) {
         Ok(frame) => (FRAME_HEADER_LEN + length, Some(frame)),
         Err(err) => {
-            tracing::warn!("Failed to parse frame: {:?}", err);
+            tracing::debug!("Failed to parse frame: {:?}", err);
             (FRAME_HEADER_LEN + length, None)
         }
     }
