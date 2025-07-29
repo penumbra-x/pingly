@@ -6,8 +6,6 @@ use serde::{Serialize, Serializer};
 use super::{error::Error, priority::StreamDependency, FrameType};
 
 /// Header frame
-///
-/// This could be either a request.
 #[derive(Debug, Serialize)]
 pub struct HeadersFrame {
     /// The type of the frame
