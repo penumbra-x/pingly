@@ -9,7 +9,7 @@ use axum::{
     extract::ConnectInfo,
     http::{Request, StatusCode},
     response::IntoResponse,
-    routing::get,
+    routing::any,
     Extension, Router,
 };
 use axum_extra::response::ErasedJson;
@@ -62,10 +62,10 @@ pub async fn run(args: Args) -> Result<()> {
         .layer(ConcurrencyLimitLayer::new(args.concurrent));
 
     let router = Router::new()
-        .route("/api/all", get(track))
-        .route("/api/tls", get(tls_track))
-        .route("/api/http1", get(http1_headers))
-        .route("/api/http2", get(http2_frames))
+        .route("/api/all", any(track))
+        .route("/api/tls", any(tls_track))
+        .route("/api/http1", any(http1_headers))
+        .route("/api/http2", any(http2_frames))
         .layer(global_layer);
 
     // Signal the server to shutdown using Handle.
