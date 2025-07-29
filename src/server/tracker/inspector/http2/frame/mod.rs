@@ -56,6 +56,7 @@ pub enum FrameType {
     Unknown,
 }
 
+/// Represents an unknown frame.
 #[derive(Debug, Serialize)]
 pub struct UnknownFrame {
     pub frame_type: FrameType,

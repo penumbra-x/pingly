@@ -1,17 +1,8 @@
-#![allow(unused)]
-use std::{
-    fmt::Write, io::IoSlice, ops::Deref, pin::Pin, sync::Arc, task, task::Poll, time::Duration,
-};
+use std::{ops::Deref, pin::Pin, sync::Arc, task, task::Poll};
 
-use axum::http::{HeaderMap, HeaderName};
 use bytes::Bytes;
-use httlib_hpack::Decoder;
 use pin_project_lite::pin_project;
-use serde::{ser::SerializeStruct, Serialize, Serializer};
-use tokio::{
-    io::{self, AsyncRead, AsyncWrite, ReadBuf},
-    time::Instant,
-};
+use tokio::io::{self, AsyncRead, AsyncWrite, ReadBuf};
 use tokio_rustls::server::TlsStream;
 
 use super::tls::TlsInspector;
