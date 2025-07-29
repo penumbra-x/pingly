@@ -4,7 +4,7 @@ pub mod alloc;
 #[cfg(target_family = "unix")]
 mod daemon;
 mod error;
-mod serve;
+mod server;
 
 use std::{net::SocketAddr, path::PathBuf};
 
@@ -76,7 +76,7 @@ pub enum Commands {
 fn main() -> Result<()> {
     let opt = Opt::parse();
     match opt.commands {
-        Commands::Run(config) => serve::run(config),
+        Commands::Run(config) => server::run(config),
         #[cfg(target_family = "unix")]
         Commands::Start(config) => daemon::start(config),
         #[cfg(target_family = "unix")]

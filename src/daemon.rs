@@ -6,7 +6,7 @@ use std::{
 
 use daemonize::Daemonize;
 
-use crate::{serve, Args};
+use crate::{server, Args};
 
 const PID_PATH: &str = "/var/run/pingly.pid";
 const DEFAULT_STDOUT_PATH: &str = "/var/run/pingly.out";
@@ -68,7 +68,7 @@ pub fn start(config: Args) -> crate::Result<()> {
         std::process::exit(-1)
     }
 
-    serve::run(config)
+    server::run(config)
 }
 
 /// Stop the daemon

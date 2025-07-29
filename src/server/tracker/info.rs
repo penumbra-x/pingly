@@ -6,10 +6,7 @@ use axum::{
 };
 use serde::{Serialize, Serializer};
 
-use super::{
-    inspector::{ClientHello, Frame, Http1Headers},
-    Http2Frame,
-};
+use super::inspector::{ClientHello, Frame, Http1Headers, Http2Frame};
 
 /// TLS handshake tracking information, wrapping the parsed ClientHello.
 #[derive(Serialize)]
@@ -28,7 +25,17 @@ pub struct Http2TrackInfo {
     sent_frames: Http2Frame,
 }
 
-/// Aggregated tracking information for a connection, including TLS, HTTP/1, and HTTP/2 details.
+/// Collects TLS, HTTP/1, and HTTP/2 handshake info for tracking.
+#[derive(Clone, Default)]
+pub struct ConnectionTrack {
+    client_hello: Option<ClientHello>,
+    http1_headers: Option<Http1Headers>,
+    http2_frames: Option<Http2Frame>,
+}
+
+/// TrackInfo aggregates tracking details for a single connection,
+/// including TLS handshake info, HTTP/1 headers, and HTTP/2 frames.
+/// Useful for logging, analysis, or debugging connection
 #[derive(Serialize)]
 pub struct TrackInfo<'a> {
     donate: &'static str,
@@ -47,6 +54,15 @@ pub struct TrackInfo<'a> {
 
     #[serde(skip_serializing_if = "Option::is_none")]
     http2: Option<Http2TrackInfo>,
+}
+
+/// Track enum to specify which tracking information to collect.
+#[repr(u8)]
+pub enum Track {
+    ALL,
+    TLS,
+    HTTP1,
+    HTTP2,
 }
 
 // ==== impl Http1TrackInfo ====
@@ -195,6 +211,28 @@ where
     vec.serialize(serializer)
 }
 
+// ==== impl ConnectionTrack ====
+
+impl ConnectionTrack {
+    /// Set TLS client hello
+    #[inline]
+    pub fn set_client_hello(&mut self, client_hello: Option<ClientHello>) {
+        self.client_hello = client_hello;
+    }
+
+    /// Set HTTP/1 headers
+    #[inline]
+    pub fn set_http1_headers(&mut self, headers: Http1Headers) {
+        self.http1_headers = Some(headers);
+    }
+
+    /// Set HTTP/2 frames
+    #[inline]
+    pub fn set_http2_frames(&mut self, frames: Http2Frame) {
+        self.http2_frames = Some(frames);
+    }
+}
+
 // ==== impl TrackInfo ====
 
 impl<'a> TrackInfo<'a> {
@@ -203,82 +241,40 @@ impl<'a> TrackInfo<'a> {
     /// Create a new [`TrackInfo`] instance.
     #[inline]
     pub fn new(
+        track: Track,
         socket_addr: SocketAddr,
         req: &'a Request<Body>,
-        tls: Option<TlsTrackInfo>,
-        http1: Option<Http1TrackInfo>,
-        http2: Option<Http2TrackInfo>,
+        connection_track: ConnectionTrack,
     ) -> TrackInfo<'a> {
         let headers = req.headers();
-        Self {
+        let track_info = TrackInfo {
             donate: Self::DONATE_URL,
             socket_addr,
             http_version: format!("{:?}", req.version()),
             method: req.method().as_str(),
             user_agent: headers.get(USER_AGENT).and_then(|v| v.to_str().ok()),
-            http1,
-            http2,
-            tls,
-        }
-    }
+            tls: connection_track.client_hello.map(TlsTrackInfo::new),
+            http1: connection_track.http1_headers.map(Http1TrackInfo::new),
+            http2: connection_track.http2_frames.and_then(Http2TrackInfo::new),
+        };
 
-    /// Create a new [`TrackInfo`] instance for TLS tracking.
-    #[inline]
-    pub fn new_tls_track(
-        socket_addr: SocketAddr,
-        req: &'a Request<Body>,
-        tls: Option<TlsTrackInfo>,
-    ) -> TrackInfo<'a> {
-        let headers = req.headers();
-        Self {
-            donate: Self::DONATE_URL,
-            socket_addr,
-            http_version: format!("{:?}", req.version()),
-            method: req.method().as_str(),
-            user_agent: headers.get(USER_AGENT).and_then(|v| v.to_str().ok()),
-            http1: None,
-            http2: None,
-            tls,
-        }
-    }
-
-    /// Create a new [`TrackInfo`] instance for HTTP/1 tracking.
-    #[inline]
-    pub fn new_http1_track(
-        socket_addr: SocketAddr,
-        req: &'a Request<Body>,
-        http1: Option<Http1TrackInfo>,
-    ) -> TrackInfo<'a> {
-        let headers = req.headers();
-        Self {
-            donate: Self::DONATE_URL,
-            socket_addr,
-            http_version: format!("{:?}", req.version()),
-            method: req.method().as_str(),
-            user_agent: headers.get(USER_AGENT).and_then(|v| v.to_str().ok()),
-            http1,
-            http2: None,
-            tls: None,
-        }
-    }
-
-    /// Create a new [`TrackInfo`] instance for HTTP/2 tracking.
-    #[inline]
-    pub fn new_http2_track(
-        socket_addr: SocketAddr,
-        req: &'a Request<Body>,
-        http2: Option<Http2TrackInfo>,
-    ) -> TrackInfo<'a> {
-        let headers = req.headers();
-        Self {
-            donate: Self::DONATE_URL,
-            socket_addr,
-            http_version: format!("{:?}", req.version()),
-            method: req.method().as_str(),
-            user_agent: headers.get(USER_AGENT).and_then(|v| v.to_str().ok()),
-            http1: None,
-            http2,
-            tls: None,
+        match track {
+            Track::ALL => track_info,
+            Track::TLS => TrackInfo {
+                http1: None,
+                http2: None,
+                ..track_info
+            },
+            Track::HTTP1 => TrackInfo {
+                tls: None,
+                http2: None,
+                ..track_info
+            },
+            Track::HTTP2 => TrackInfo {
+                tls: None,
+                http1: None,
+                ..track_info
+            },
         }
     }
 }
