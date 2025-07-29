@@ -12,6 +12,9 @@ use super::{
     parser,
 };
 
+/// `LazyClientHello` is a buffer for accumulating raw TLS ClientHello data during the handshake
+/// phase. It allows incremental appending of data and supports deferred (lazy) parsing into a
+/// structured `ClientHello` only when needed, without interfering with the TLS handshake process.
 #[derive(Clone)]
 pub struct LazyClientHello {
     buf: Vec<u8>,
@@ -21,7 +24,10 @@ impl LazyClientHello {
     /// Creates a new, empty buffer for accumulating ClientHello data.
     pub fn new() -> LazyClientHello {
         LazyClientHello {
-            buf: Vec::with_capacity(1024),
+            // Buffer size is set to match typical ClientHello message sizes sent by most browsers.
+            // This helps minimize memory reallocations and is sufficient for almost all real-world
+            // cases. Adjust this value if larger ClientHello payloads are encountered.
+            buf: Vec::with_capacity(2048),
         }
     }
 
