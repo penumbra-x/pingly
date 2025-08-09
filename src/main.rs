@@ -48,26 +48,26 @@ pub struct Args {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run TLS/HTTP2 tracking server
+    /// Run tracking server
     Run(Args),
 
-    /// Start TLS/HTTP2 tracking server daemon
+    /// Start tracking server daemon
     #[cfg(target_family = "unix")]
     Start(Args),
 
-    /// Restart TLS/HTTP2 tracking server daemon
+    /// Restart tracking server daemon
     #[cfg(target_family = "unix")]
     Restart(Args),
 
-    /// Stop TLS/HTTP2 tracking server daemon
+    /// Stop tracking server daemon
     #[cfg(target_family = "unix")]
     Stop,
 
-    /// Show the TLS/HTTP2 tracking server daemon log
+    /// Show tracking server daemon log
     #[cfg(target_family = "unix")]
     Log,
 
-    /// Show the TLS/HTTP2 tracking server daemon process
+    /// Show tracking server daemon process
     #[cfg(target_family = "unix")]
     PS,
 }
