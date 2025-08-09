@@ -32,4 +32,7 @@ pub enum Error {
 
     #[error(transparent)]
     Join(#[from] tokio::task::JoinError),
+
+    #[error(transparent)]
+    Utf8(#[from] std::string::FromUtf8Error),
 }
