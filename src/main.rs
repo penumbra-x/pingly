@@ -74,17 +74,18 @@ pub enum Commands {
 
 fn main() -> Result<()> {
     let opt = Opt::parse();
+    let daemon = daemon::Daemon::default();
     match opt.commands {
         Commands::Run(config) => server::run(config),
         #[cfg(target_family = "unix")]
-        Commands::Start(config) => daemon::start(config),
+        Commands::Start(config) => daemon.start(config),
         #[cfg(target_family = "unix")]
-        Commands::Restart(config) => daemon::restart(config),
+        Commands::Restart(config) => daemon.restart(config),
         #[cfg(target_family = "unix")]
-        Commands::Stop => daemon::stop(),
+        Commands::Stop => daemon.stop(),
         #[cfg(target_family = "unix")]
-        Commands::PS => daemon::status(),
+        Commands::PS => daemon.status(),
         #[cfg(target_family = "unix")]
-        Commands::Log => daemon::log(),
+        Commands::Log => daemon.log(),
     }
 }

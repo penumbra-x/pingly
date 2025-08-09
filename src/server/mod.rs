@@ -64,8 +64,8 @@ pub async fn run(args: Args) -> Result<()> {
     let router = Router::new()
         .route("/api/all", any(track))
         .route("/api/tls", any(tls_track))
-        .route("/api/http1", any(http1_headers))
-        .route("/api/http2", any(http2_frames))
+        .route("/api/http1", any(http1_track))
+        .route("/api/http2", any(http2_track))
         .layer(global_layer);
 
     // Signal the server to shutdown using Handle.
@@ -130,7 +130,7 @@ pub async fn tls_track(
 }
 
 #[inline]
-pub async fn http1_headers(
+pub async fn http1_track(
     Extension(ConnectInfo(addr)): Extension<ConnectInfo<SocketAddr>>,
     Extension(track): Extension<ConnectionTrack>,
     req: Request<Body>,
@@ -142,7 +142,7 @@ pub async fn http1_headers(
 }
 
 #[inline]
-pub async fn http2_frames(
+pub async fn http2_track(
     Extension(ConnectInfo(addr)): Extension<ConnectInfo<SocketAddr>>,
     Extension(track): Extension<ConnectionTrack>,
     req: Request<Body>,
