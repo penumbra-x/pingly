@@ -13,7 +13,7 @@ use axum::{
     Extension, Router,
 };
 use axum_extra::response::ErasedJson;
-use axum_server::{tls_rustls::RustlsConfig, Handle};
+use axum_server::Handle;
 use tower::limit::ConcurrencyLimitLayer;
 use tower_http::{
     cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer},
@@ -74,17 +74,20 @@ pub async fn run(args: Args) -> Result<()> {
     // Spawn a task to gracefully shutdown server.
     tokio::spawn(signal::graceful_shutdown(handle.clone()));
 
-    // Load TLS configuration
-    let tls_config = match (args.tls_cert.as_ref(), args.tls_key.as_ref()) {
-        (Some(cert), Some(key)) => RustlsConfig::from_pem_chain_file(cert, key).await,
-        _ => {
-            let (cert, key) = certificate::get_self_signed_cert()?;
-            RustlsConfig::from_pem(cert, key).await
+    // Load TLS configuration with HTTP/2 ALPN preference
+    let config = match (args.tls_cert.as_ref(), args.tls_key.as_ref()) {
+        (Some(cert_path), Some(key_path)) => {
+            // Load TLS configuration from PEM files
+            certificate::config_from_pem_chain_file(cert_path, key_path).await?
         }
-    }?;
+        _ => {
+            // Generate self-signed certificate configuration
+            certificate::config_self_signed().await?
+        }
+    };
 
     // Use TLS configuration to create a secure server
-    let mut server = axum_server::bind_rustls(args.bind, tls_config);
+    let mut server = axum_server::bind_rustls(args.bind, config);
     server
         .http_builder()
         .http2()
