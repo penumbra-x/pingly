@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 use tls_parser::{TlsCipherSuite, TlsExtensionType, TlsMessage, TlsMessageHandshake};
+use tokio_rustls::rustls::ProtocolVersion;
 
 use super::{
     enums::{
@@ -54,6 +55,8 @@ impl LazyClientHello {
 pub struct ClientHello {
     /// TLS version of message
     tls_version: TlsVersion,
+    /// The final TLS version negotiated during the handshake
+    tls_version_negotiated: Option<TlsVersion>,
     client_random: String,
     session_id: Option<String>,
     /// A list of compression methods supported by client
@@ -233,6 +236,15 @@ pub struct OidFilter {
 }
 
 impl ClientHello {
+    /// Sets the negotiated TLS version for this `ClientHello`.
+    ///
+    /// # Parameters
+    /// - `version`: An `Option<ProtocolVersion>` representing the negotiated TLS version.
+    ///   If `Some`, the version is set; if `None`, no version was negotiated.
+    pub fn set_tls_version_negotiated(&mut self, version: Option<ProtocolVersion>) {
+        self.tls_version_negotiated = version.map(u16::from).map(TlsVersion::from);
+    }
+
     pub fn parse(buf: &[u8]) -> Option<Self> {
         let (_, r) = tls_parser::parse_tls_raw_record(buf).ok()?;
         let (_, msg_list) = tls_parser::parse_tls_record_with_header(r.data, &r.hdr).ok()?;
@@ -247,6 +259,7 @@ impl ClientHello {
 
         let mut client_hello = ClientHello {
             tls_version: TlsVersion::from(payload.version.0),
+            tls_version_negotiated: None,
             client_random: hex::encode(payload.random),
             session_id: payload.session_id.map(hex::encode),
             compression_algorithms: payload
