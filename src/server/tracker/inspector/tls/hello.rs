@@ -2,6 +2,7 @@
 
 use serde::Serialize;
 use tls_parser::{TlsCipherSuite, TlsExtensionType, TlsMessage, TlsMessageHandshake};
+use tokio_rustls::rustls::ProtocolVersion;
 
 use super::{
     enums::{
@@ -54,6 +55,8 @@ impl LazyClientHello {
 pub struct ClientHello {
     /// TLS version of message
     tls_version: TlsVersion,
+    /// The final TLS version negotiated during the handshake
+    tls_version_negotiated: Option<TlsVersion>,
     client_random: String,
     session_id: Option<String>,
     /// A list of compression methods supported by client
@@ -150,11 +153,24 @@ pub enum TlsExtension {
     /// Pre-shared key for session resumption or 0-RTT.
     PreSharedKey { value: u16, data: String },
 
+    /// Encrypted Server Name Indication (ESNI) extension.
+    EncryptedServerName {
+        value: u16,
+        ciphersuite: &'static str,
+        group: NamesGroup,
+        key_share: String,
+        record_digest: String,
+        encrypted_sni: String,
+    },
+
+    /// Oid filters for certificate extensions.
+    OidFilters { value: u16, data: Vec<OidFilter> },
+
     /// GREASE value for protocol extensibility testing.
     Grease { value: u16 },
 
     /// Any unknown or unsupported extension.
-    Opaque { value: u16, data: String },
+    Opaque { value: u16, data: Option<String> },
 }
 
 /// StatusRequest extension data
@@ -212,7 +228,23 @@ pub struct PskKeyExchangeModes {
     pub ke_modes: Vec<PskKeyExchangeMode>,
 }
 
+/// Represents a filter for OID extensions in certificates.
+#[derive(Clone, Debug, PartialEq, Serialize, Hash)]
+pub struct OidFilter {
+    pub cert_ext_oid: String,
+    pub cert_ext_val: String,
+}
+
 impl ClientHello {
+    /// Sets the negotiated TLS version for this `ClientHello`.
+    ///
+    /// # Parameters
+    /// - `version`: An `Option<ProtocolVersion>` representing the negotiated TLS version.
+    ///   If `Some`, the version is set; if `None`, no version was negotiated.
+    pub fn set_tls_version_negotiated(&mut self, version: Option<ProtocolVersion>) {
+        self.tls_version_negotiated = version.map(u16::from).map(TlsVersion::from);
+    }
+
     pub fn parse(buf: &[u8]) -> Option<Self> {
         let (_, r) = tls_parser::parse_tls_raw_record(buf).ok()?;
         let (_, msg_list) = tls_parser::parse_tls_record_with_header(r.data, &r.hdr).ok()?;
@@ -227,6 +259,7 @@ impl ClientHello {
 
         let mut client_hello = ClientHello {
             tls_version: TlsVersion::from(payload.version.0),
+            tls_version_negotiated: None,
             client_random: hex::encode(payload.random),
             session_id: payload.session_id.map(hex::encode),
             compression_algorithms: payload
@@ -470,16 +503,115 @@ impl ClientHello {
                         value: extension_id,
                     });
                 }
-                tls_parser::TlsExtension::Unknown(_, data) => {
-                    tracing::debug!("ClientHello: Unknown extension: {extension_id:?}");
+
+                tls_parser::TlsExtension::MaxFragmentLength(data) => {
+                    tracing::debug!("ClientHello: MaxFragmentLength extension");
 
                     client_hello.extensions.push(TlsExtension::Opaque {
                         value: extension_id,
-                        data: hex::encode(data),
+                        data: Some(hex::encode(data.to_be_bytes())),
                     });
                 }
-                _ => {
-                    tracing::debug!("ClientHello: Unhandled extension: {extension_id:?}");
+                tls_parser::TlsExtension::KeyShareOld(items) => {
+                    tracing::debug!("ClientHello: KeyShareOld extension: {items:?}");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: Some(hex::encode(items)),
+                    });
+                }
+                tls_parser::TlsExtension::EarlyData(data) => {
+                    tracing::debug!("ClientHello: EarlyData extension: {data:?}");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: data.map(|d| hex::encode(d.to_be_bytes())),
+                    });
+                }
+                tls_parser::TlsExtension::Cookie(items) => {
+                    tracing::debug!("ClientHello: Cookie extension: {items:?}");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: Some(hex::encode(items)),
+                    });
+                }
+                tls_parser::TlsExtension::Heartbeat(data) => {
+                    tracing::debug!("ClientHello: Heartbeat extension: {data:?}");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: Some(hex::encode(data.to_be_bytes())),
+                    });
+                }
+                tls_parser::TlsExtension::EncryptThenMac => {
+                    tracing::debug!("ClientHello: EncryptThenMac extension");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: None,
+                    });
+                }
+                tls_parser::TlsExtension::OidFilters(oid_filters) => {
+                    tracing::debug!("ClientHello: OidFilters extension: {oid_filters:?}");
+
+                    client_hello.extensions.push(TlsExtension::OidFilters {
+                        value: extension_id,
+                        data: oid_filters
+                            .into_iter()
+                            .map(|f| OidFilter {
+                                cert_ext_oid: hex::encode(f.cert_ext_oid),
+                                cert_ext_val: hex::encode(f.cert_ext_val),
+                            })
+                            .collect(),
+                    });
+                }
+                tls_parser::TlsExtension::PostHandshakeAuth => {
+                    tracing::debug!("ClientHello: PostHandshakeAuth extension");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: None,
+                    });
+                }
+                tls_parser::TlsExtension::NextProtocolNegotiation => {
+                    tracing::debug!("ClientHello: NextProtocolNegotiation extension");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: None,
+                    });
+                }
+                tls_parser::TlsExtension::EncryptedServerName {
+                    ciphersuite,
+                    group,
+                    key_share,
+                    record_digest,
+                    encrypted_sni,
+                } => {
+                    tracing::debug!("ClientHello: EncryptedServerName extension");
+
+                    client_hello
+                        .extensions
+                        .push(TlsExtension::EncryptedServerName {
+                            value: extension_id,
+                            ciphersuite: tls_parser::TlsCipherSuite::from_id(ciphersuite.0)
+                                .map(|c| c.name)
+                                .unwrap_or("Unknown"),
+                            group: NamesGroup::from(group.0),
+                            key_share: hex::encode(key_share),
+                            record_digest: hex::encode(record_digest),
+                            encrypted_sni: hex::encode(encrypted_sni),
+                        });
+                }
+
+                tls_parser::TlsExtension::Unknown(id, data) => {
+                    tracing::debug!("ClientHello: Unknown extension: {id:?}, {data:?}");
+
+                    client_hello.extensions.push(TlsExtension::Opaque {
+                        value: extension_id,
+                        data: Some(hex::encode(data)),
+                    });
                 }
             }
         }
