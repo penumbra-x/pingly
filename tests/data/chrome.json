@@ -284,6 +284,8 @@
     "http2": {
         "akamai_fingerprint": "1:65536;2:0;4:6291456;6:262144|15663105|0|m,a,s,p",
         "akamai_fingerprint_hash": "52d84b11737d980aef856699f885ca86",
+        "h2_text": "SETTINGS:1=65536,2=0,4=6291456,6=262144|WINDOW_UPDATE(connection):+15663105|HEADERS(stream):m,a,s,p",
+        "h2_text_hash": "a1b02f586d6e22bdd7c676a7d0462964",
         "sent_frames": [
             {
                 "frame_type": "Settings",

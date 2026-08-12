@@ -15,7 +15,7 @@ use pingly::{
     h1::{Http1Head, RequestHead},
     h2::{
         frame::{HeadersFlagName, StreamDependency},
-        AkamaiFingerprint, Frame,
+        AkamaiFingerprint, Frame, Http2Fingerprint,
     },
     h3::Http3Fingerprint,
     tls::{ClientHelloHandshakeBuffer, ClientHelloParseError, TlsVersion},
@@ -95,6 +95,12 @@ pub struct Http2TrackInfo {
 
     /// The lowercase MD5 digest of the Akamai fingerprint.
     akamai_fingerprint_hash: Box<str>,
+
+    /// Typed opening-frame sequence in client wire order.
+    h2_text: Box<str>,
+
+    /// Lowercase MD5 digest of the HTTP/2 opening-frame sequence.
+    h2_text_hash: Box<str>,
 
     /// Shared bidirectional frame capture used by all serialized HTTP/2 views.
     capture: Http2Capture,
@@ -457,10 +463,13 @@ impl Http2TrackInfo {
     pub fn new(capture: Http2Capture) -> Option<Http2TrackInfo> {
         let event_count = capture.count();
         let akamai = AkamaiFingerprint::from_frames(initial_client_frames(&capture, event_count))?;
+        let fingerprint = Http2Fingerprint::from_frames(client_frames(&capture, event_count))?;
 
         Some(Self {
             akamai_fingerprint: akamai.fingerprint,
             akamai_fingerprint_hash: akamai.hash,
+            h2_text: fingerprint.h2_text,
+            h2_text_hash: fingerprint.h2_text_hash,
             capture,
             event_count,
         })
@@ -473,9 +482,11 @@ impl Serialize for Http2TrackInfo {
         S: Serializer,
     {
         let streams = summarize_http2_streams(&self.capture, self.event_count);
-        let mut state = serializer.serialize_struct("Http2TrackInfo", 5)?;
+        let mut state = serializer.serialize_struct("Http2TrackInfo", 7)?;
         state.serialize_field("akamai_fingerprint", &self.akamai_fingerprint)?;
         state.serialize_field("akamai_fingerprint_hash", &self.akamai_fingerprint_hash)?;
+        state.serialize_field("h2_text", &self.h2_text)?;
+        state.serialize_field("h2_text_hash", &self.h2_text_hash)?;
         state.serialize_field(
             "sent_frames",
             &ClientFrameSequence {
@@ -495,7 +506,7 @@ impl Serialize for Http2TrackInfo {
     }
 }
 
-/// Existing client-frame JSON view retained for API compatibility.
+/// Client-to-server frames visible when response analysis began.
 struct ClientFrameSequence<'a> {
     capture: &'a Http2Capture,
     event_count: usize,
@@ -506,9 +517,9 @@ impl Serialize for ClientFrameSequence<'_> {
     where
         S: Serializer,
     {
-        let count = legacy_client_frames(self.capture, self.event_count).count();
+        let count = client_frames(self.capture, self.event_count).count();
         let mut sequence = serializer.serialize_seq(Some(count))?;
-        for frame in legacy_client_frames(self.capture, self.event_count) {
+        for frame in client_frames(self.capture, self.event_count) {
             sequence.serialize_element(frame)?;
         }
         sequence.end()
@@ -537,29 +548,11 @@ fn initial_client_frames(
         .flatten()
 }
 
-/// Recreates the bounded client sequence exposed before full-connection capture was added.
-fn legacy_client_frames(
-    capture: &Http2Capture,
-    event_count: usize,
-) -> impl Iterator<Item = &Frame> {
-    capture
-        .iter()
-        .take(event_count)
-        .scan((0usize, false), |(header_blocks, stopped), (_, event)| {
-            if *stopped {
-                return None;
-            }
-            if event.direction != Http2FrameDirection::ClientToServer {
-                return Some(None);
-            }
-
-            if let Frame::Headers(headers) = &event.frame {
-                *header_blocks = header_blocks.saturating_add(1);
-                *stopped = headers.is_extended_connect(b"websocket") || *header_blocks >= 2;
-            }
-            Some(Some(&event.frame))
-        })
-        .flatten()
+/// Returns every captured client frame in observation order.
+fn client_frames(capture: &Http2Capture, event_count: usize) -> impl Iterator<Item = &Frame> {
+    capture.iter().take(event_count).filter_map(|(_, event)| {
+        (event.direction == Http2FrameDirection::ClientToServer).then_some(&event.frame)
+    })
 }
 
 /// Bidirectional connection timeline serialized in observation order.
@@ -1014,7 +1007,7 @@ mod tests {
                 DataFrame, HeaderField as Http2HeaderField, HeadersFlags,
                 HeadersFrame as Http2HeadersFrame, PriorityUpdateFrame,
                 SettingsFrame as Http2SettingsFrame, StreamDependency,
-                UnknownFrame as Http2UnknownFrame,
+                UnknownFrame as Http2UnknownFrame, WindowUpdateFrame,
             },
             Frame as Http2Frame, FrameType as Http2FrameType,
         },
@@ -1167,6 +1160,13 @@ mod tests {
         capture.push(Http2FrameEvent {
             elapsed_us: 20,
             direction: Http2FrameDirection::ClientToServer,
+            frame: Http2Frame::WindowUpdate(
+                WindowUpdateFrame::try_from((3, &[0x00, 0xbe, 0x00, 0x00][..])).unwrap(),
+            ),
+        });
+        capture.push(Http2FrameEvent {
+            elapsed_us: 25,
+            direction: Http2FrameDirection::ClientToServer,
             frame: Http2Frame::PriorityUpdate(
                 PriorityUpdateFrame::try_from((0, 0, &[0, 0, 0, 3, b'u', b'=', b'0'][..])).unwrap(),
             ),
@@ -1210,6 +1210,18 @@ mod tests {
                 continuations: Vec::new(),
             }),
         });
+        capture.push(Http2FrameEvent {
+            elapsed_us: 55,
+            direction: Http2FrameDirection::ClientToServer,
+            frame: Http2Frame::Unknown(Http2UnknownFrame {
+                frame_type: Http2FrameType::Unknown,
+                type_id: 0x06,
+                stream_id: 0,
+                length: 8,
+                flags: 0,
+                payload: vec![0; 8],
+            }),
+        });
 
         let info = Http2TrackInfo::new(capture.clone()).unwrap();
         capture.push(Http2FrameEvent {
@@ -1223,14 +1235,21 @@ mod tests {
         let reset_stream = &value["streams"][1];
 
         assert_eq!(value["akamai_fingerprint"], "1:65536|00|0|m,p");
-        assert_eq!(value["sent_frames"].as_array().unwrap().len(), 4);
-        assert_eq!(value["events"].as_array().unwrap().len(), 6);
-        assert_eq!(value["events"][3]["direction"], "ServerToClient");
+        assert_eq!(
+            value["h2_text"],
+            "SETTINGS:1=65536|HEADERS(stream):m,p|WINDOW_UPDATE(stream):+12451840|PRIORITY_UPDATE(stream):u=0"
+        );
+        assert_eq!(value["h2_text_hash"], "41c7434f6cdfd2430c037987951c9350");
+        assert_eq!(value["sent_frames"].as_array().unwrap().len(), 6);
+        assert_eq!(value["sent_frames"][2]["increment"], 12_451_840);
+        assert_eq!(value["sent_frames"][5]["type_id"], 6);
+        assert_eq!(value["events"].as_array().unwrap().len(), 8);
+        assert_eq!(value["events"][4]["direction"], "ServerToClient");
         assert_eq!(stream["stream_id"], 3);
         assert_eq!(stream["method"], "GET");
         assert_eq!(stream["path"], "/api/http2");
-        assert_eq!(stream["event_indices"], json!([1, 2, 3]));
-        assert_eq!(stream["client_wire_bytes"], 16);
+        assert_eq!(stream["event_indices"], json!([1, 2, 3, 4]));
+        assert_eq!(stream["client_wire_bytes"], 29);
         assert_eq!(stream["server_wire_bytes"], 11);
         assert_eq!(stream["client_ended"], true);
         assert_eq!(stream["server_ended"], true);
@@ -1241,10 +1260,10 @@ mod tests {
         );
         assert_eq!(
             stream["priority"]["updates"],
-            json!([{"elapsed_us": 20, "value": "u=0"}])
+            json!([{"elapsed_us": 25, "value": "u=0"}])
         );
         assert_eq!(reset_stream["stream_id"], 5);
-        assert_eq!(reset_stream["event_indices"], json!([4]));
+        assert_eq!(reset_stream["event_indices"], json!([5]));
         assert_eq!(reset_stream["reset"], true);
         assert_eq!(reset_stream["client_ended"], true);
         assert_eq!(reset_stream["server_ended"], true);
