@@ -263,6 +263,12 @@ fn assert_http2(sample: &BrowserSample, http2: &Http2Response) {
         "{} restored Akamai fingerprint",
         sample.name
     );
+    assert_eq!(
+        Http2Fingerprint::from_frames(&restored),
+        Some(fingerprint),
+        "{} restored HTTP/2 fingerprint",
+        sample.name
+    );
 }
 
 fn json_roundtrip<T>(value: &T) -> T

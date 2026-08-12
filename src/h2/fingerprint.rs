@@ -1,4 +1,4 @@
-//! Ordered HTTP/2 client fingerprints built from the opening frame sequence.
+//! Pingly HTTP/2 fingerprints built from the ordered opening frame sequence.
 
 use std::fmt::Write;
 
@@ -6,14 +6,14 @@ use serde::{Deserialize, Serialize};
 
 use super::{frame::Frame, md5_hash, push_pseudo_header_order};
 
-/// An ordered HTTP/2 fingerprint and its MD5 digest.
+/// Pingly's ordered HTTP/2 fingerprint and its MD5 digest.
 ///
 /// Frame names and targets remain explicit so connection and stream flow-control
-/// updates cannot be confused. A second `HEADERS` frame starts another request
-/// and ends the opening sample.
+/// updates cannot be confused. The next `HEADERS` field section ends the sample;
+/// it can carry trailers on the same stream or open another request stream.
 #[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Http2Fingerprint {
-    /// Typed opening-frame sequence in original wire order.
+    /// Pingly-defined opening-frame sequence in original wire order.
     pub h2_text: Box<str>,
 
     /// Lowercase MD5 digest of [`Self::h2_text`].
@@ -22,6 +22,11 @@ pub struct Http2Fingerprint {
 
 impl Http2Fingerprint {
     /// Builds a fingerprint from client frames in their original wire order.
+    ///
+    /// The first `HEADERS` frame selects the request stream. Supported control
+    /// frames are retained until, but not including, the next `HEADERS` field
+    /// section; `DATA` and opaque frames are omitted. See
+    /// [RFC 9113, Section 8.1](https://www.rfc-editor.org/rfc/rfc9113#section-8.1).
     ///
     /// `WINDOW_UPDATE` targets follow
     /// [RFC 9113, Section 6.9](https://www.rfc-editor.org/rfc/rfc9113#section-6.9).
