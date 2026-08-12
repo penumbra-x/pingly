@@ -1237,9 +1237,9 @@ mod tests {
         assert_eq!(value["akamai_fingerprint"], "1:65536|00|0|m,p");
         assert_eq!(
             value["h2_text"],
-            "SETTINGS:1=65536|HEADERS(stream):m,p|WINDOW_UPDATE(stream):+12451840|PRIORITY_UPDATE(stream):u=0"
+            "SETTINGS:1=65536|HEADERS(stream):m,p|WINDOW_UPDATE(stream):12451840|PRIORITY_UPDATE(stream):u=0"
         );
-        assert_eq!(value["h2_text_hash"], "41c7434f6cdfd2430c037987951c9350");
+        assert_eq!(value["h2_text_hash"], "04e7eb17eb6119f9a65c4cacb32f4dea");
         assert_eq!(value["sent_frames"].as_array().unwrap().len(), 6);
         assert_eq!(value["sent_frames"][2]["increment"], 12_451_840);
         assert_eq!(value["sent_frames"][5]["type_id"], 6);

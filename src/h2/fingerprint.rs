@@ -73,7 +73,7 @@ fn fingerprint_text(frames: &[&Frame], stream_id: u32) -> String {
             Frame::WindowUpdate(frame) => {
                 push_token(&mut output);
                 push_target(&mut output, "WINDOW_UPDATE", frame.stream_id, stream_id);
-                let _ = write!(output, ":+{}", frame.increment);
+                let _ = write!(output, ":{}", frame.increment);
             }
             Frame::Priority(frame) => {
                 push_token(&mut output);
@@ -152,11 +152,11 @@ mod tests {
 
         assert_eq!(
             fingerprint.h2_text.as_ref(),
-            "SETTINGS:1=65536,2=0,4=131072,5=16384|WINDOW_UPDATE(connection):+12517377|HEADERS(stream):m,p|WINDOW_UPDATE(stream):+12451840|PRIORITY_UPDATE(stream):u=0,i"
+            "SETTINGS:1=65536,2=0,4=131072,5=16384|WINDOW_UPDATE(connection):12517377|HEADERS(stream):m,p|WINDOW_UPDATE(stream):12451840|PRIORITY_UPDATE(stream):u=0,i"
         );
         assert_eq!(
             fingerprint.h2_text_hash.as_ref(),
-            "45dd5cc8ccfc5c3f52cbb2187ca5fbf5"
+            "49e6f8e09061061919cd946b0d94ce56"
         );
     }
 }
