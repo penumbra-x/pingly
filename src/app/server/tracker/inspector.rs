@@ -4,8 +4,9 @@
 //! bounded buffering and incremental framing.
 
 use std::{
+    collections::VecDeque,
     pin::Pin,
-    sync::{Arc, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
     task::{self, Poll},
     time::Instant,
 };
@@ -26,6 +27,9 @@ pub type Http1RequestCapture = Arc<OnceLock<Http1HeadBuffer>>;
 
 /// Concurrent storage for HTTP/2 frame events captured from one connection.
 pub type Http2Capture = Arc<boxcar::Vec<Http2FrameEvent>>;
+
+/// Opening request HEADERS indices waiting to be associated with Axum requests.
+pub(in crate::server) type Http2RequestQueue = Arc<Mutex<VecDeque<usize>>>;
 
 /// Direction of an HTTP/2 frame relative to Pingly.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -143,6 +147,7 @@ impl Http2WireCapture {
         direction: Http2FrameDirection,
         started_at: Instant,
         events: &boxcar::Vec<Http2FrameEvent>,
+        requests: Option<&Http2RequestQueue>,
     ) -> Option<u32> {
         if !self.budget.is_active() || bytes.is_empty() {
             return None;
@@ -189,11 +194,25 @@ impl Http2WireCapture {
                     data.truncate(HTTP2_DATA_PREVIEW_BYTES);
                 }
                 let elapsed_us = started_at.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
-                events.push(Http2FrameEvent {
+                let opens_request = direction == Http2FrameDirection::ClientToServer
+                    && matches!(
+                        &frame,
+                        Frame::Headers(headers)
+                            if headers.headers.iter().any(|field| field.name.as_ref() == b":method")
+                    );
+                let event_index = events.push(Http2FrameEvent {
                     elapsed_us,
                     direction,
                     frame,
                 });
+                if opens_request {
+                    if let Some(requests) = requests {
+                        requests
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner)
+                            .push_back(event_index);
+                    }
+                }
             }
         }
 
@@ -498,6 +517,9 @@ pin_project! {
         // Complete frame events shared with delayed response analysis.
         capture: Http2Capture,
 
+        // Opening request HEADERS waiting for their matching Axum requests.
+        requests: Http2RequestQueue,
+
         // Monotonic origin used for event timestamps in both directions.
         started_at: Instant,
     }
@@ -515,6 +537,7 @@ where
             inbound: Http2WireCapture::client(),
             outbound: Http2WireCapture::server(),
             capture: Arc::new(boxcar::Vec::new()),
+            requests: Arc::new(Mutex::new(VecDeque::new())),
             started_at: Instant::now(),
         }
     }
@@ -523,6 +546,12 @@ where
     #[inline]
     pub fn capture(&self) -> Http2Capture {
         self.capture.clone()
+    }
+
+    /// Returns the opening request HEADERS queue shared with response analysis.
+    #[inline]
+    pub(in crate::server) fn request_queue(&self) -> Http2RequestQueue {
+        self.requests.clone()
     }
 }
 
@@ -545,6 +574,7 @@ where
             Http2FrameDirection::ClientToServer,
             *this.started_at,
             this.capture,
+            Some(this.requests),
         ) {
             this.outbound.set_max_header_table_size(size);
         }
@@ -572,6 +602,7 @@ where
                         Http2FrameDirection::ServerToClient,
                         *this.started_at,
                         this.capture,
+                        None,
                     ) {
                         this.inbound.set_max_header_table_size(size);
                     }
@@ -597,7 +628,11 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::time::Instant;
+    use std::{
+        collections::VecDeque,
+        sync::{Arc, Mutex},
+        time::Instant,
+    };
 
     use pingly::h2::{Frame, HTTP2_CLIENT_PREFACE};
 
@@ -628,8 +663,10 @@ mod tests {
         let settings = [0, 0, 6, 0x04, 0, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0];
         let mut client_bytes = HTTP2_CLIENT_PREFACE.to_vec();
         client_bytes.extend_from_slice(&settings);
+        client_bytes.extend_from_slice(&[0, 0, 2, 0x01, 0x05, 0, 0, 0, 1, 0x82, 0x84]);
 
         let mut client = Http2WireCapture::client();
+        let requests = Arc::new(Mutex::new(VecDeque::new()));
         let mut header_table_size = None;
         for chunk in client_bytes.chunks(7) {
             header_table_size = client
@@ -638,6 +675,7 @@ mod tests {
                     Http2FrameDirection::ClientToServer,
                     started_at,
                     &events,
+                    Some(&requests),
                 )
                 .or(header_table_size);
         }
@@ -651,19 +689,27 @@ mod tests {
             Http2FrameDirection::ServerToClient,
             started_at,
             &events,
+            None,
         );
 
-        assert_eq!(events.count(), 2);
+        assert_eq!(events.count(), 3);
         assert!(matches!(
             events.get(0).map(|event| &event.frame),
             Some(Frame::Settings(_))
         ));
         assert_eq!(
-            events.get(1).map(|event| event.direction),
+            requests
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .front(),
+            Some(&1)
+        );
+        assert_eq!(
+            events.get(2).map(|event| event.direction),
             Some(Http2FrameDirection::ServerToClient)
         );
         assert!(matches!(
-            events.get(1).map(|event| &event.frame),
+            events.get(2).map(|event| &event.frame),
             Some(Frame::Headers(_))
         ));
     }
