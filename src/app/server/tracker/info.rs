@@ -1033,13 +1033,14 @@ impl TrackInfo {
         track: Track,
         addr: SocketAddr,
         req: Request<Body>,
-        mut connection_track: ConnectionTrack,
+        connection_track: ConnectionTrack,
     ) -> TrackInfo {
         #[cfg(target_os = "linux")]
         return Self::new_with_tcp(track, addr, req, connection_track, Vec::new());
 
         #[cfg(not(target_os = "linux"))]
         {
+            let mut connection_track = connection_track;
             connection_track.bind_http2_request(req.method(), req.uri());
             let ProtocolTrackInfo {
                 tls,
