@@ -238,11 +238,7 @@ pub(crate) fn router(
 }
 
 async fn enforce_request_body_limit(request: Request<Body>, next: Next) -> Response {
-    let (mut parts, body) = request.into_parts();
-    // Bind before reading the body so rejected requests cannot leave stale stream candidates.
-    if let Some(track) = parts.extensions.get_mut::<ConnectionTrack>() {
-        track.bind_http2_request(&parts.method, &parts.uri);
-    }
+    let (parts, body) = request.into_parts();
 
     if request_body_length_exceeds(&parts.headers) {
         return request_body_too_large();

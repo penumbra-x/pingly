@@ -9,12 +9,12 @@ use std::{
 
 use axum::{
     body::Body,
-    http::{header::USER_AGENT, HeaderValue, Method, Request, Uri},
+    http::{header::USER_AGENT, HeaderValue, Method, Request},
 };
 use pingly::{
     h1::{Http1Head, RequestHead},
     h2::{
-        frame::{HeadersFlagName, StreamDependency},
+        frame::{HeadersFlagName, HeadersFrame, StreamDependency},
         AkamaiFingerprint, Frame, Http2Fingerprint,
     },
     h3::Http3Fingerprint,
@@ -28,7 +28,7 @@ use tokio_rustls::rustls::ProtocolVersion;
 
 use super::inspector::{
     ClientHello, ClientHelloBuffer, Http1RequestCapture, Http2Capture, Http2FrameDirection,
-    Http2FrameEvent, Http2RequestQueue,
+    Http2FrameEvent,
 };
 use crate::server::quic::inspect::{HeadersCapture, SettingsCapture};
 #[cfg(target_os = "linux")]
@@ -241,7 +241,7 @@ pub struct Http3TrackInfo {
 #[derive(Clone)]
 enum ClientHelloCapture {
     /// ClientHello retained with its TLS record framing on a TCP connection.
-    Records(ClientHelloBuffer),
+    Records(Arc<ClientHelloBuffer>),
 
     /// ClientHello retained directly from QUIC CRYPTO handshake bytes.
     Handshake(Arc<OnceLock<ClientHelloHandshakeBuffer>>),
@@ -265,6 +265,68 @@ struct Http3RequestCapture {
     headers: HeadersCapture,
 }
 
+#[derive(Clone)]
+struct Http2RequestCapture {
+    /// Frame events shared by every request on this HTTP/2 connection.
+    capture: Http2Capture,
+
+    /// Stream selected for this request; connection-level metadata leaves it unset.
+    stream_id: Option<u32>,
+}
+
+/// Borrowed HTTP/2 request pseudo-fields used to associate wire frames with Hyper requests.
+///
+/// Regular requests follow
+/// [RFC 9113, Section 8.3.1](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.3.1),
+/// while CONNECT requests use the reduced set from
+/// [Section 8.5](https://www.rfc-editor.org/rfc/rfc9113.html#section-8.5).
+#[derive(Eq, PartialEq)]
+struct Http2RequestPseudoHeaders<'a> {
+    /// Required request method.
+    method: &'a [u8],
+
+    /// Target URI scheme, omitted by ordinary CONNECT.
+    scheme: Option<&'a [u8]>,
+
+    /// Target authority when supplied by the client.
+    authority: Option<&'a [u8]>,
+
+    /// Path and query, omitted by ordinary CONNECT.
+    path: Option<&'a [u8]>,
+
+    /// Extended CONNECT protocol, such as `websocket`.
+    protocol: Option<&'a [u8]>,
+}
+
+impl<'a> Http2RequestPseudoHeaders<'a> {
+    fn from_frame(headers: &'a HeadersFrame) -> Option<Self> {
+        Some(Self {
+            method: headers.header_value(b":method")?,
+            scheme: headers.header_value(b":scheme"),
+            authority: headers.header_value(b":authority"),
+            path: headers.header_value(b":path"),
+            protocol: headers.header_value(b":protocol"),
+        })
+    }
+
+    fn from_request<B>(request: &'a Request<B>) -> Self {
+        let uri = request.uri();
+
+        Self {
+            method: request.method().as_str().as_bytes(),
+            scheme: uri.scheme_str().map(str::as_bytes),
+            authority: uri
+                .authority()
+                .map(|authority| authority.as_str().as_bytes()),
+            path: uri.path_and_query().map(|path| path.as_str().as_bytes()),
+            protocol: request
+                .extensions()
+                .get::<hyper::ext::Protocol>()
+                .map(AsRef::<[u8]>::as_ref),
+        }
+    }
+}
+
 /// Collects TLS, HTTP/1, HTTP/2, and HTTP/3 handshake info for tracking.
 #[derive(Clone, Default)]
 pub struct ConnectionTrack {
@@ -280,14 +342,8 @@ pub struct ConnectionTrack {
     /// Raw HTTP/1 request head shared with the stream inspector for delayed parsing.
     http1_capture: Option<Http1RequestCapture>,
 
-    /// Bidirectional HTTP/2 frame events retained in observed order.
-    http2_capture: Option<Http2Capture>,
-
-    /// Opening request HEADERS waiting to be matched with server requests.
-    http2_requests: Option<Http2RequestQueue>,
-
-    /// HTTP/2 request stream associated with this copy of the connection metadata.
-    http2_stream_id: Option<u32>,
+    /// Bidirectional HTTP/2 events and the stream selected for this request.
+    http2_capture: Option<Http2RequestCapture>,
 
     /// HTTP/3 control-stream SETTINGS and request-stream HEADERS captures.
     http3_capture: Option<Http3RequestCapture>,
@@ -428,18 +484,19 @@ impl Serialize for Http1TrackInfo {
 }
 
 impl WebSocketHeaders {
-    fn from_http2(capture: Http2Capture) -> Option<Self> {
-        let event_index = capture
-            .iter()
-            .filter_map(|(index, event)| match (&event.direction, &event.frame) {
-                (Http2FrameDirection::ClientToServer, Frame::Headers(headers))
-                    if headers.is_extended_connect(b"websocket") =>
-                {
-                    Some(index)
-                }
-                _ => None,
-            })
-            .last()?;
+    fn from_http2(capture: Http2Capture, stream_id: u32) -> Option<Self> {
+        let event_index =
+            capture
+                .iter()
+                .find_map(|(index, event)| match (&event.direction, &event.frame) {
+                    (Http2FrameDirection::ClientToServer, Frame::Headers(headers))
+                        if headers.stream_id == stream_id
+                            && headers.is_extended_connect(b"websocket") =>
+                    {
+                        Some(index)
+                    }
+                    _ => None,
+                })?;
 
         Some(Self::Http2 {
             capture,
@@ -687,9 +744,9 @@ fn update_http2_request_summary(
 ) {
     match &event.frame {
         Frame::Headers(headers) => {
-            stream.method.get_or_insert_with(|| {
-                http2_header_text(headers, b":method").unwrap_or_else(|| "Unknown".into())
-            });
+            if stream.method.is_none() {
+                stream.method = http2_header_text(headers, b":method");
+            }
             if stream.path.is_none() {
                 stream.path = http2_header_text(headers, b":path");
             }
@@ -713,7 +770,7 @@ fn update_http2_request_summary(
     }
 }
 
-fn http2_event_matches_request(event: &Http2FrameEvent, method: &Method, uri: &Uri) -> bool {
+fn http2_event_matches_request<B>(event: &Http2FrameEvent, request: &Request<B>) -> bool {
     let Http2FrameEvent {
         direction: Http2FrameDirection::ClientToServer,
         frame: Frame::Headers(headers),
@@ -722,28 +779,16 @@ fn http2_event_matches_request(event: &Http2FrameEvent, method: &Method, uri: &U
     else {
         return false;
     };
-    let path = uri
-        .path_and_query()
-        .map_or_else(|| uri.path(), |path| path.as_str());
 
-    http2_header_value(headers, b":method") == Some(method.as_str().as_bytes())
-        && http2_header_value(headers, b":path") == Some(path.as_bytes())
+    Http2RequestPseudoHeaders::from_frame(headers)
+        .is_some_and(|pseudo| pseudo == Http2RequestPseudoHeaders::from_request(request))
 }
 
-fn http2_header_text(headers: &pingly::h2::frame::HeadersFrame, name: &[u8]) -> Option<Box<str>> {
-    http2_header_value(headers, name)
-        .map(|value| String::from_utf8_lossy(value).into_owned().into_boxed_str())
-}
-
-fn http2_header_value<'a>(
-    headers: &'a pingly::h2::frame::HeadersFrame,
-    name: &[u8],
-) -> Option<&'a [u8]> {
+fn http2_header_text(headers: &HeadersFrame, name: &[u8]) -> Option<Box<str>> {
     headers
-        .headers
-        .iter()
-        .find(|field| field.name.as_ref() == name)
-        .map(|field| field.value.as_ref())
+        .header_value(name)
+        .and_then(|value| std::str::from_utf8(value).ok())
+        .map(Into::into)
 }
 
 fn http2_event_stream_id(frame: &Frame) -> u32 {
@@ -816,15 +861,16 @@ impl ConnectionTrack {
             client_hello,
             http1_capture,
             http2_capture,
-            http2_requests: _,
-            http2_stream_id: _,
             http3_capture: _,
         } = self;
 
         let headers = http1_capture
             .and_then(http1_track_info)
             .map(WebSocketHeaders::Http1)
-            .or_else(|| http2_capture.and_then(WebSocketHeaders::from_http2));
+            .or_else(|| {
+                let Http2RequestCapture { capture, stream_id } = http2_capture?;
+                WebSocketHeaders::from_http2(capture, stream_id?)
+            });
 
         WebSocketTrackInfo {
             tls: tls_track_info(client_hello, tls_version_negotiated),
@@ -854,7 +900,7 @@ impl ConnectionTrack {
     /// Sets a ClientHello captured with TLS record framing.
     #[inline]
     pub fn set_client_hello(&mut self, client_hello: Option<ClientHelloBuffer>) {
-        self.client_hello = client_hello.map(ClientHelloCapture::Records);
+        self.client_hello = client_hello.map(Arc::new).map(ClientHelloCapture::Records);
     }
 
     /// Sets a ClientHello captured from QUIC CRYPTO handshake bytes.
@@ -872,11 +918,13 @@ impl ConnectionTrack {
         self.http1_capture = Some(capture);
     }
 
-    /// Sets captured HTTP/2 frame events and opening request indices.
+    /// Sets the HTTP/2 connection capture before individual requests are selected.
     #[inline]
-    pub fn set_http2_capture(&mut self, capture: Http2Capture, requests: Http2RequestQueue) {
-        self.http2_capture = Some(capture);
-        self.http2_requests = Some(requests);
+    pub fn set_http2_capture(&mut self, capture: Http2Capture) {
+        self.http2_capture = Some(Http2RequestCapture {
+            capture,
+            stream_id: None,
+        });
     }
 
     /// Sets HTTP/3 control-stream SETTINGS and request-stream HEADERS captures.
@@ -889,37 +937,16 @@ impl ConnectionTrack {
         self.http3_capture = Some(Http3RequestCapture { settings, headers });
     }
 
-    /// Associates this request with its captured opening HTTP/2 HEADERS frame.
-    pub(in crate::server) fn bind_http2_request(&mut self, method: &Method, uri: &Uri) {
-        if self.http2_stream_id.is_some() {
-            return;
+    /// Claims this request's HTTP/2 stream and returns its connection metadata.
+    #[must_use]
+    pub(in crate::server) fn claim_request<B>(&self, request: &Request<B>) -> Self {
+        let mut track = self.clone();
+        if let Some(http2) = track.http2_capture.as_mut() {
+            http2.stream_id = http2
+                .capture
+                .claim_request_stream(|event| http2_event_matches_request(event, request));
         }
-
-        let Some((capture, requests)) = self
-            .http2_capture
-            .as_ref()
-            .zip(self.http2_requests.as_ref())
-        else {
-            return;
-        };
-
-        let stream_id = {
-            let mut requests = requests
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let Some(position) = requests.iter().position(|event_index| {
-                capture
-                    .get(*event_index)
-                    .is_some_and(|event| http2_event_matches_request(event, method, uri))
-            }) else {
-                return;
-            };
-            requests
-                .remove(position)
-                .and_then(|event_index| capture.get(event_index))
-                .map(|event| event.frame.stream_id())
-        };
-        self.http2_stream_id = stream_id;
+        track
     }
 }
 
@@ -934,8 +961,6 @@ fn protocol_track_info(
         client_hello,
         http1_capture,
         http2_capture,
-        http2_requests: _,
-        http2_stream_id,
         http3_capture,
     } = connection_track;
 
@@ -966,13 +991,19 @@ fn protocol_track_info(
         track.includes_http2(),
         http2_capture,
         include_connection_history,
-        http2_stream_id,
     ) {
-        (true, Some(capture), true, _) => Http2TrackInfo::new(capture, None),
-        (true, Some(capture), false, Some(stream_id)) => {
-            Http2TrackInfo::new(capture, Some(stream_id))
+        (true, Some(Http2RequestCapture { capture, .. }), true) => {
+            Http2TrackInfo::new(capture, None)
         }
-        (true, Some(_), false, None) => {
+        (
+            true,
+            Some(Http2RequestCapture {
+                capture,
+                stream_id: Some(stream_id),
+            }),
+            false,
+        ) => Http2TrackInfo::new(capture, Some(stream_id)),
+        (true, Some(_), false) => {
             tracing::debug!("HTTP/2 request could not be matched to its opening HEADERS frame");
             None
         }
@@ -1040,8 +1071,6 @@ impl TrackInfo {
 
         #[cfg(not(target_os = "linux"))]
         {
-            let mut connection_track = connection_track;
-            connection_track.bind_http2_request(req.method(), req.uri());
             let ProtocolTrackInfo {
                 tls,
                 http1,
@@ -1074,10 +1103,9 @@ impl TrackInfo {
         track: Track,
         addr: SocketAddr,
         req: Request<Body>,
-        mut connection_track: ConnectionTrack,
+        connection_track: ConnectionTrack,
         tcp_packets: Vec<CapturedPacket>,
     ) -> TrackInfo {
-        connection_track.bind_http2_request(req.method(), req.uri());
         let ProtocolTrackInfo {
             tls,
             http1,
@@ -1129,10 +1157,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::{
-        collections::VecDeque,
-        sync::{Arc, Mutex, OnceLock},
-    };
+    use std::sync::{Arc, OnceLock};
 
     use axum::{
         body::Body,
@@ -1157,7 +1182,7 @@ mod tests {
     use super::{protocol_track_info, ConnectionTrack, Http2TrackInfo, Track, TrackInfo};
     use crate::server::{
         quic::inspect::SettingsCapture,
-        tracker::inspector::{Http2FrameDirection, Http2FrameEvent},
+        tracker::inspector::{Http2Capture, Http2FrameDirection, Http2FrameEvent},
     };
 
     fn quic_client_hello() -> ClientHelloHandshakeBuffer {
@@ -1258,7 +1283,7 @@ mod tests {
 
     #[test]
     fn http2_capture_serializes_compatible_frames_and_stream_timeline() {
-        let capture = Arc::new(boxcar::Vec::new());
+        let capture = Http2Capture::default();
         let settings =
             Http2SettingsFrame::try_from((0, 0, &[0x00, 0x01, 0x00, 0x01, 0x00, 0x00][..]))
                 .unwrap();
@@ -1408,14 +1433,14 @@ mod tests {
         assert_eq!(reset_stream["client_ended"], true);
         assert_eq!(reset_stream["server_ended"], true);
 
-        let requests = Arc::new(Mutex::new(VecDeque::from([1, 6])));
         let mut connection = ConnectionTrack::default();
-        connection.set_http2_capture(capture, requests);
+        connection.set_http2_capture(capture);
         let request = Request::builder()
             .version(Version::HTTP_2)
             .uri("/later")
             .body(Body::empty())
             .unwrap();
+        let connection = connection.claim_request(&request);
         let scoped = serde_json::to_value(TrackInfo::new(
             Track::HTTP2,
             "127.0.0.1:443".parse().unwrap(),
