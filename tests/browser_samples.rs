@@ -23,8 +23,18 @@ struct Http3BrowserSample {
 
 const BROWSER_SAMPLES: &[BrowserSample] = &[
     BrowserSample {
-        name: "Chrome",
-        response: include_bytes!("data/chrome.json"),
+        name: "Chrome 150",
+        response: include_bytes!("data/chrome_150.json"),
+        priority: StreamDependency {
+            weight: 256,
+            depends_on: 0,
+            exclusive: 1,
+        },
+        stream_window_increment: None,
+    },
+    BrowserSample {
+        name: "Chrome 152",
+        response: include_bytes!("data/chrome_152.json"),
         priority: StreamDependency {
             weight: 256,
             depends_on: 0,
