@@ -243,8 +243,10 @@ fn parse_u16_type<T: From<u16>>(i: &[u8]) -> IResult<&[u8], Vec<T>> {
     }
 
     let values = i
-        .chunks_exact(2)
-        .map(|chunk| T::from(((chunk[0] as u16) << 8) | chunk[1] as u16))
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|&[high, low]| T::from(u16::from_be_bytes([high, low])))
         .collect();
     Ok((&[], values))
 }
