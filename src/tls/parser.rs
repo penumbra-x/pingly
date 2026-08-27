@@ -11,7 +11,7 @@ use nom::{
 
 use super::hello::{
     ECHClientHello, ECHClientHelloOuter, HexBytes, HpkeSymmetricCipherSuite, ProtocolName,
-    TlsExtension,
+    TlsExtension, TrustAnchorId,
 };
 
 /// Splits one framed ClientHello extension into its type and exact payload.
@@ -169,6 +169,38 @@ pub fn parse_tls_extension_ech(id: u16, data: &[u8]) -> IResult<&[u8], TlsExtens
             ))
         }
     }
+}
+
+/// Parses a ClientHello `trust_anchors` extension.
+///
+/// The payload is a two-byte-length-prefixed vector of non-empty, one-byte-length-prefixed Trust
+/// Anchor IDs. See
+/// [draft-ietf-tls-trust-anchor-ids, Section 4.1](https://datatracker.ietf.org/doc/html/draft-ietf-tls-trust-anchor-ids#section-4.1).
+pub fn parse_tls_extension_trust_anchors(
+    extension_id: u16,
+    data: &[u8],
+) -> IResult<&[u8], TlsExtension> {
+    let (input, payload) = length_data(be_u16).parse(data)?;
+    let (input, _) = eof(input)?;
+    let mut remaining = payload;
+    let mut trust_anchors = Vec::new();
+
+    while !remaining.is_empty() {
+        let (input, id_length) = verify(be_u8, |length| *length > 0).parse(remaining)?;
+        let (input, id) = take(id_length).parse(input)?;
+        let id = TrustAnchorId::from_bytes(id)
+            .map_err(|_| nom::Err::Error(make_error(id, ErrorKind::Verify)))?;
+        trust_anchors.push(id);
+        remaining = input;
+    }
+
+    Ok((
+        input,
+        TlsExtension::TrustAnchors {
+            value: extension_id,
+            data: trust_anchors,
+        },
+    ))
 }
 
 /// Parses protocol names from an ALPN payload.
