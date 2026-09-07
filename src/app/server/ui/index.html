@@ -1,0 +1,2693 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light dark">
+    <meta name="description" content="Inspect TLS, HTTP, WebSocket, QUIC, and TCP request fingerprints">
+    <title>Pingly Protocol Inspector</title>
+    <script>
+        (() => {
+            let theme;
+            try {
+                const stored = window.localStorage.getItem("pingly-theme");
+                if (stored === "light" || stored === "dark") {
+                    theme = stored;
+                }
+            } catch (_) {
+                // The system preference remains available when storage is blocked.
+            }
+
+            theme ??= window.matchMedia("(prefers-color-scheme: dark)").matches
+                ? "dark"
+                : "light";
+
+            window.applyPinglyTheme = function (selectedTheme) {
+                const root = document.documentElement;
+                root.dataset.theme = selectedTheme;
+                root.style.colorScheme = selectedTheme;
+            };
+
+            window.applyPinglyTheme(theme);
+        })();
+    </script>
+    <link
+        rel="icon"
+        href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='10' fill='%2321262d'/%3E%3Ctext x='32' y='43' text-anchor='middle' font-family='Arial,sans-serif' font-size='34' font-weight='700' fill='%23f0f6fc'%3EP%3C/text%3E%3C/svg%3E"
+    >
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@fontsource-variable/manrope@5.3.0/index.css"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"
+    >
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/400.css"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"
+    >
+    <link
+        rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.3.0/600.css"
+        crossorigin="anonymous"
+        referrerpolicy="no-referrer"
+    >
+    <style>
+        :root {
+            --pingly-content-width: 84rem;
+            --pingly-header-height: 4rem;
+            --pingly-sidebar-width: 13.75rem;
+            --pingly-radius: 8px;
+            --pingly-radius-small: 6px;
+            --pingly-font-sans: "Manrope Variable", Manrope, -apple-system, BlinkMacSystemFont,
+                "Segoe UI", sans-serif;
+            --pingly-font-mono: "IBM Plex Mono", "SFMono-Regular", Consolas,
+                "Liberation Mono", monospace;
+
+            --pingly-canvas: #f3f3f1;
+            --pingly-surface: #fafafa;
+            --pingly-surface-raised: #ffffff;
+            --pingly-surface-subtle: #efefed;
+            --pingly-surface-strong: #e5e4e1;
+            --pingly-text: #262625;
+            --pingly-text-muted: #62615e;
+            --pingly-text-subtle: #85827e;
+            --pingly-text-inverse: #fffaf6;
+            --pingly-border: #d9d7d3;
+            --pingly-border-strong: #c1bdb8;
+            --pingly-hover: rgb(59 46 42 / 0.05);
+            --pingly-active: rgb(59 46 42 / 0.08);
+            --pingly-overlay: rgb(38 38 37 / 0.5);
+
+            --pingly-brand: #3b2e2a;
+            --pingly-brand-hover: #2f2421;
+            --pingly-brand-text: #fffaf6;
+            --pingly-accent: #8c391f;
+            --pingly-accent-hover: #6f2d19;
+            --pingly-accent-text: #7a321d;
+            --pingly-accent-muted: #f5e9e2;
+            --pingly-accent-border: #d7aa91;
+
+            --pingly-blue: #276f96;
+            --pingly-blue-muted: #e5f0f5;
+            --pingly-blue-border: #b8d0dc;
+            --pingly-green: #2d704f;
+            --pingly-green-muted: #e6f3eb;
+            --pingly-green-border: #bad9c7;
+            --pingly-violet: #6c5a9a;
+            --pingly-violet-muted: #f0ebf8;
+            --pingly-violet-border: #d4c9e8;
+            --pingly-danger: #b3433b;
+            --pingly-danger-muted: #fbe9e6;
+            --pingly-danger-border: #e9bbb5;
+            --pingly-warning: #936313;
+            --pingly-warning-muted: #fbf1d7;
+            --pingly-warning-border: #e5cd91;
+
+            --pingly-code: #171717;
+            --pingly-code-surface: #20201f;
+            --pingly-code-text: #f2eee8;
+            --pingly-code-muted: #aaa49c;
+            --pingly-focus: #a84a2b;
+            --pingly-shadow-small: 0 1px 2px rgb(59 46 42 / 0.06);
+            --pingly-shadow-raised: 0 10px 28px -18px rgb(59 46 42 / 0.32),
+                0 1px 2px rgb(59 46 42 / 0.06);
+
+            --bgColor-default: var(--pingly-surface-raised);
+            --bgColor-inset: var(--pingly-canvas);
+            --bgColor-muted: var(--pingly-surface-subtle);
+            --bgColor-neutral-muted: var(--pingly-surface-strong);
+            --bgColor-accent-muted: var(--pingly-accent-muted);
+            --bgColor-success-muted: var(--pingly-green-muted);
+            --bgColor-danger-muted: var(--pingly-danger-muted);
+            --bgColor-attention-muted: var(--pingly-warning-muted);
+            --bgColor-emphasis: var(--pingly-code);
+            --fgColor-default: var(--pingly-text);
+            --fgColor-muted: var(--pingly-text-muted);
+            --fgColor-accent: var(--pingly-blue);
+            --fgColor-success: var(--pingly-green);
+            --fgColor-danger: var(--pingly-danger);
+            --fgColor-attention: var(--pingly-warning);
+            --fgColor-onEmphasis: var(--pingly-text-inverse);
+            --borderColor-default: var(--pingly-border-strong);
+            --borderColor-muted: var(--pingly-border);
+            --borderColor-accent-emphasis: var(--pingly-accent);
+            --borderColor-accent-muted: var(--pingly-accent-border);
+            --borderColor-success-muted: var(--pingly-green-border);
+            --borderColor-danger-muted: var(--pingly-danger-border);
+            --borderColor-attention-muted: var(--pingly-warning-border);
+            --button-default-bgColor-rest: var(--pingly-surface-raised);
+            --button-default-bgColor-hover: var(--pingly-surface-subtle);
+            --button-default-bgColor-disabled: var(--pingly-surface-subtle);
+            --button-default-borderColor-rest: var(--pingly-border-strong);
+            --button-default-borderColor-hover: #aaa5a0;
+            --button-default-fgColor-rest: var(--pingly-text);
+            --button-default-fgColor-disabled: var(--pingly-text-subtle);
+            --button-primary-bgColor-rest: var(--pingly-brand);
+            --button-primary-borderColor-rest: var(--pingly-brand);
+            --button-primary-fgColor-rest: var(--pingly-brand-text);
+            --control-transparent-bgColor-hover: var(--pingly-hover);
+            --control-transparent-bgColor-active: var(--pingly-active);
+            --focus-outlineColor: var(--pingly-focus);
+            --overlay-backdrop-bgColor: var(--pingly-overlay);
+            --shadow-floating-small: var(--pingly-shadow-raised);
+        }
+
+        [data-theme="dark"] {
+            --pingly-canvas: #0e1011;
+            --pingly-surface: #141617;
+            --pingly-surface-raised: #191b1d;
+            --pingly-surface-subtle: #212427;
+            --pingly-surface-strong: #292c2f;
+            --pingly-text: #e9e6e1;
+            --pingly-text-muted: #aaa59e;
+            --pingly-text-subtle: #7f7b76;
+            --pingly-text-inverse: #fffdf9;
+            --pingly-border: #303438;
+            --pingly-border-strong: #454a4f;
+            --pingly-hover: rgb(255 255 255 / 0.055);
+            --pingly-active: rgb(255 255 255 / 0.09);
+            --pingly-overlay: rgb(0 0 0 / 0.64);
+
+            --pingly-brand: #3b2e2a;
+            --pingly-brand-hover: #4a3832;
+            --pingly-brand-text: #fffaf6;
+            --pingly-accent: #e69f67;
+            --pingly-accent-hover: #f0b07d;
+            --pingly-accent-text: #e9a673;
+            --pingly-accent-muted: #30211b;
+            --pingly-accent-border: #714735;
+
+            --pingly-blue: #78aee8;
+            --pingly-blue-muted: #172536;
+            --pingly-blue-border: #294864;
+            --pingly-green: #7cc49d;
+            --pingly-green-muted: #172a21;
+            --pingly-green-border: #30543f;
+            --pingly-violet: #b4a1df;
+            --pingly-violet-muted: #251f34;
+            --pingly-violet-border: #493e64;
+            --pingly-danger: #e58a82;
+            --pingly-danger-muted: #321d1c;
+            --pingly-danger-border: #633a36;
+            --pingly-warning: #dbb667;
+            --pingly-warning-muted: #302817;
+            --pingly-warning-border: #5b4b27;
+
+            --pingly-code: #090a0b;
+            --pingly-code-surface: #111315;
+            --pingly-code-text: #e8e4de;
+            --pingly-code-muted: #98938c;
+            --pingly-focus: #e69f67;
+            --pingly-shadow-small: 0 1px 2px rgb(0 0 0 / 0.28);
+            --pingly-shadow-raised: 0 14px 34px -20px rgb(0 0 0 / 0.82),
+                0 1px 2px rgb(0 0 0 / 0.34);
+
+            --button-default-borderColor-hover: #646a70;
+        }
+
+        *,
+        *::before,
+        *::after {
+            box-sizing: border-box;
+            letter-spacing: 0 !important;
+        }
+
+        html {
+            min-height: 100%;
+            overflow-y: scroll;
+            scroll-padding-top: calc(var(--pingly-header-height) + 1rem);
+            scrollbar-gutter: stable;
+            background: var(--pingly-canvas);
+        }
+
+        body {
+            min-height: 100%;
+            margin: 0;
+            color: var(--pingly-text);
+            background: var(--pingly-canvas);
+            font-family: var(--pingly-font-sans);
+            font-size: 14px;
+            line-height: 1.5;
+            text-rendering: optimizeLegibility;
+        }
+
+        button,
+        input,
+        select,
+        textarea {
+            color: inherit;
+            font: inherit;
+        }
+
+        table {
+            color: inherit;
+        }
+
+        code,
+        pre,
+        .font-monospace {
+            font-family: var(--pingly-font-mono) !important;
+            font-variant-ligatures: none;
+        }
+
+        code {
+            color: var(--pingly-blue);
+        }
+
+        a {
+            color: var(--pingly-accent-text);
+            text-decoration-thickness: 1px;
+            text-underline-offset: 0.18em;
+        }
+
+        a:hover {
+            color: var(--pingly-accent-hover);
+        }
+
+        ::selection {
+            color: var(--pingly-text);
+            background: var(--pingly-accent-border);
+        }
+
+        [hidden] {
+            display: none !important;
+        }
+
+        :focus-visible {
+            outline: 2px solid var(--focus-outlineColor, var(--fgColor-accent));
+            outline-offset: 2px;
+        }
+
+        .skip-link {
+            position: fixed;
+            top: 0.5rem;
+            left: 0.5rem;
+            z-index: 120;
+            transform: translateY(-160%);
+        }
+
+        .skip-link:focus {
+            transform: translateY(0);
+        }
+
+        .app-shell {
+            min-height: 100dvh;
+        }
+
+        .app-header {
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            min-height: var(--pingly-header-height);
+            border-bottom: 1px solid var(--pingly-border);
+            background: var(--pingly-surface);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .app-header-inner {
+            display: flex;
+            min-height: var(--pingly-header-height);
+            align-items: center;
+            gap: 0.875rem;
+            padding: 0 1.25rem;
+        }
+
+        .app-brand {
+            display: inline-flex;
+            min-width: 0;
+            align-items: center;
+            gap: 0.625rem;
+            color: var(--fgColor-default);
+            text-decoration: none;
+        }
+
+        .brand-mark {
+            display: grid;
+            width: 2.25rem;
+            height: 2.25rem;
+            flex: 0 0 2.25rem;
+            place-items: center;
+            border: 1px solid var(--pingly-brand);
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-brand-text);
+            background: var(--pingly-brand);
+            box-shadow: var(--pingly-shadow-raised);
+            font-size: 1rem;
+            font-weight: 800;
+        }
+
+        .brand-copy {
+            display: flex;
+            min-width: 0;
+            flex-direction: column;
+            line-height: 1.15;
+        }
+
+        .brand-copy strong {
+            font-size: 1rem;
+            font-weight: 700;
+        }
+
+        .brand-copy small {
+            color: var(--pingly-text-muted);
+            font-size: 0.75rem;
+        }
+
+        .header-actions {
+            display: flex;
+            min-width: 0;
+            align-items: center;
+            gap: 0.5rem;
+            margin-left: auto;
+        }
+
+        .icon-button {
+            display: inline-grid;
+            width: 2.25rem;
+            min-width: 2.25rem;
+            height: 2.25rem;
+            padding: 0 !important;
+            place-items: center;
+            border-color: var(--button-default-borderColor-rest);
+            color: var(--button-default-fgColor-rest);
+            background: var(--button-default-bgColor-rest);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .icon-button:hover {
+            border-color: var(--button-default-borderColor-hover);
+            background: var(--button-default-bgColor-hover);
+            box-shadow: var(--pingly-shadow-raised);
+        }
+
+        .icon-button:active {
+            transform: translateY(1px);
+        }
+
+        .icon-button:disabled {
+            color: var(--button-default-fgColor-disabled);
+            background: var(--button-default-bgColor-disabled);
+        }
+
+        .icon-button svg,
+        .sidebar-item svg,
+        .summary-icon svg,
+        .empty-icon svg,
+        .btn svg {
+            width: 1rem;
+            height: 1rem;
+            stroke-width: 1.8;
+        }
+
+        .github-icon {
+            width: 1.125rem;
+            height: 1.125rem;
+            background: currentColor;
+            -webkit-mask: url("https://cdn.jsdelivr.net/npm/simple-icons@16.27.0/icons/github.svg") center / contain no-repeat;
+            mask: url("https://cdn.jsdelivr.net/npm/simple-icons@16.27.0/icons/github.svg") center / contain no-repeat;
+        }
+
+        .capture-status {
+            display: inline-flex;
+            min-height: 1.75rem;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0 0.625rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: 999px;
+            color: var(--pingly-text-muted);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .status-dot {
+            width: 0.4375rem;
+            height: 0.4375rem;
+            flex: 0 0 0.4375rem;
+            border-radius: 50%;
+            background: var(--fgColor-muted);
+        }
+
+        .capture-status[data-state="live"] {
+            border-color: var(--borderColor-success-muted);
+            color: var(--fgColor-success);
+            background: var(--bgColor-success-muted);
+        }
+
+        .capture-status[data-state="live"] .status-dot {
+            background: var(--fgColor-success);
+        }
+
+        .capture-status[data-state="error"] {
+            border-color: var(--borderColor-danger-muted);
+            color: var(--fgColor-danger);
+            background: var(--bgColor-danger-muted);
+        }
+
+        .capture-status[data-state="error"] .status-dot {
+            background: var(--fgColor-danger);
+        }
+
+        .status-dot-animated {
+            animation: status-pulse 1.6s ease-in-out infinite;
+        }
+
+        @keyframes status-pulse {
+            50% {
+                opacity: 0.35;
+            }
+        }
+
+        .app-layout {
+            display: grid;
+            min-height: calc(100dvh - var(--pingly-header-height));
+            grid-template-columns: var(--pingly-sidebar-width) minmax(0, 1fr);
+        }
+
+        .app-sidebar {
+            position: sticky;
+            top: var(--pingly-header-height);
+            align-self: start;
+            width: var(--pingly-sidebar-width);
+            height: calc(100dvh - var(--pingly-header-height));
+            overflow-y: auto;
+            border-right: 1px solid var(--pingly-border);
+            background: var(--pingly-surface);
+            scrollbar-width: thin;
+        }
+
+        .sidebar-nav {
+            display: flex;
+            flex-direction: column;
+            gap: 0.375rem;
+            padding: 1rem 0.75rem;
+        }
+
+        .sidebar-item {
+            position: relative;
+            display: grid;
+            width: 100%;
+            min-height: 2.375rem;
+            grid-template-columns: 1.25rem minmax(0, 1fr) auto;
+            align-items: center;
+            gap: 0.625rem;
+            padding: 0.5rem 0.625rem;
+            border: 1px solid transparent;
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-text-muted);
+            background: transparent;
+            font-weight: 600;
+            text-align: left;
+            cursor: pointer;
+            transition:
+                color 120ms ease,
+                background-color 120ms ease,
+                border-color 120ms ease,
+                transform 120ms ease;
+        }
+
+        .sidebar-item:hover {
+            border-color: var(--pingly-border);
+            color: var(--pingly-text);
+            background: var(--pingly-surface-raised);
+            transform: translateX(2px);
+        }
+
+        .sidebar-item.active {
+            border-color: var(--pingly-brand);
+            color: var(--pingly-brand-text);
+            background: var(--pingly-brand);
+            box-shadow: var(--pingly-shadow-raised);
+            font-weight: 600;
+        }
+
+        .sidebar-item.active svg {
+            color: var(--pingly-accent);
+        }
+
+        .nav-count {
+            min-width: 1.5rem;
+            padding: 0.0625rem 0.375rem;
+            border-radius: 999px;
+            color: var(--pingly-text-muted);
+            background: var(--pingly-surface-strong);
+            font-family: var(--pingly-font-mono);
+            font-size: 0.6875rem;
+            text-align: center;
+        }
+
+        .sidebar-item.active .nav-count {
+            color: var(--pingly-brand-text);
+            background: rgb(255 255 255 / 0.12);
+        }
+
+        .sidebar-backdrop {
+            display: none;
+        }
+
+        .app-main {
+            min-width: 0;
+        }
+
+        .app-main:focus {
+            outline: none;
+        }
+
+        .content-shell {
+            width: min(100%, var(--pingly-content-width));
+            margin: 0 auto;
+            padding: 2.5rem clamp(1.25rem, 3vw, 3rem) 0;
+        }
+
+        .view-heading {
+            display: flex;
+            min-width: 0;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .view-context {
+            margin: 0 0 0.375rem;
+            color: var(--pingly-accent-text);
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .view-heading h1 {
+            margin: 0;
+            font-size: clamp(1.75rem, 3vw, 2.25rem);
+            font-weight: 650;
+            line-height: 1.12;
+        }
+
+        .capture-time {
+            flex-shrink: 0;
+            padding: 0.4375rem 0.625rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: 999px;
+            color: var(--pingly-text-muted);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+            font-family: var(--pingly-font-mono);
+            font-size: 0.75rem;
+        }
+
+        .summary-grid {
+            display: grid;
+            margin-bottom: 2rem;
+            overflow: hidden;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-raised);
+        }
+
+        .summary-item {
+            min-width: 0;
+            padding: 1rem;
+        }
+
+        .summary-item + .summary-item {
+            border-left: 1px solid var(--pingly-border);
+        }
+
+        .summary-row {
+            display: grid;
+            min-width: 0;
+            grid-template-columns: 2rem minmax(0, 1fr);
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .summary-icon {
+            display: grid;
+            width: 2rem;
+            height: 2rem;
+            place-items: center;
+            border: 1px solid var(--pingly-accent-border);
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-accent-text);
+            background: var(--pingly-accent-muted);
+        }
+
+        .summary-item:nth-child(2) .summary-icon {
+            border-color: var(--pingly-blue-border);
+            color: var(--pingly-blue);
+            background: var(--pingly-blue-muted);
+        }
+
+        .summary-item:nth-child(3) .summary-icon {
+            border-color: var(--pingly-green-border);
+            color: var(--pingly-green);
+            background: var(--pingly-green-muted);
+        }
+
+        .summary-item:nth-child(4) .summary-icon {
+            border-color: var(--pingly-violet-border);
+            color: var(--pingly-violet);
+            background: var(--pingly-violet-muted);
+        }
+
+        .summary-label {
+            margin-bottom: 0.125rem;
+            color: var(--pingly-text-muted);
+            font-size: 0.75rem;
+        }
+
+        .summary-value {
+            display: block;
+            overflow: hidden;
+            font-family: var(--pingly-font-mono);
+            font-size: 0.8125rem;
+            font-weight: 600;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .analysis-section {
+            margin-bottom: 2.25rem;
+        }
+
+        .section-heading {
+            display: flex;
+            align-items: flex-end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid var(--pingly-border);
+        }
+
+        .section-heading h2,
+        .section-heading .h3 {
+            margin: 0;
+            font-size: 1.0625rem;
+            font-weight: 650;
+            line-height: 1.4;
+        }
+
+        .page-pretitle {
+            margin: 0 0 0.125rem;
+            color: var(--pingly-accent-text);
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .row.g-3 {
+            display: grid;
+            align-items: start;
+            gap: 1rem;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+
+        .row.g-3 > * {
+            min-width: 0;
+            width: auto !important;
+            max-width: none !important;
+        }
+
+        .card {
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .card-body {
+            padding: 1rem;
+        }
+
+        .fingerprint-card {
+            align-self: start;
+            transition:
+                border-color 120ms ease,
+                box-shadow 120ms ease,
+                transform 120ms ease;
+        }
+
+        .fingerprint-card:hover {
+            border-color: var(--pingly-border-strong);
+            box-shadow: var(--pingly-shadow-raised);
+            transform: translateY(-1px);
+        }
+
+        .fingerprint-card.opacity-50 {
+            opacity: 0.65;
+        }
+
+        .fingerprint-card-body {
+            display: flex;
+            min-height: 100%;
+            flex-direction: column;
+        }
+
+        .fingerprint-label {
+            display: inline-flex;
+            width: fit-content;
+            align-items: center;
+            padding: 0.125rem 0.4375rem;
+            border: 1px solid var(--pingly-accent-border);
+            border-radius: 999px;
+            color: var(--pingly-accent-text);
+            background: var(--pingly-accent-muted);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+
+        .badge,
+        .protocol-token {
+            display: inline-flex;
+            width: fit-content;
+            align-items: center;
+            padding: 0.125rem 0.4375rem;
+            border: 1px solid var(--pingly-blue-border);
+            border-radius: 999px;
+            color: var(--pingly-blue);
+            background: var(--pingly-blue-muted);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            line-height: 1.25;
+        }
+
+        .fingerprint-value-box {
+            min-height: 2.75rem;
+            padding: 0.75rem;
+            border-left: 2px solid var(--pingly-accent);
+            border-radius: 0 var(--pingly-radius) var(--pingly-radius) 0;
+            color: var(--pingly-code-text);
+            background: var(--pingly-code);
+            box-shadow: inset 0 1px rgb(255 255 255 / 0.04);
+        }
+
+        .fingerprint-value-box code,
+        .fingerprint-value-box .text-body {
+            color: var(--pingly-code-text) !important;
+        }
+
+        .fingerprint-value-box .text-secondary {
+            color: var(--pingly-code-muted) !important;
+        }
+
+        .fingerprint-source {
+            margin-top: 1rem;
+            padding-top: 0.875rem;
+            border-top: 1px solid var(--pingly-border);
+        }
+
+        .fingerprint-source code {
+            display: block;
+            padding: 0.625rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-blue);
+            background: var(--pingly-surface-subtle);
+            line-height: 1.55;
+        }
+
+        .detail-grid {
+            display: grid;
+            margin: 0 0 1rem;
+            overflow: hidden;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .detail-item {
+            min-width: 0;
+            padding: 0.875rem 1rem;
+            border-bottom: 1px solid var(--pingly-border);
+        }
+
+        .detail-item:nth-child(odd) {
+            border-right: 1px solid var(--pingly-border);
+        }
+
+        .detail-item:nth-last-child(-n + 2) {
+            border-bottom: 0;
+        }
+
+        .detail-item dt {
+            margin-bottom: 0.25rem;
+            color: var(--pingly-text-muted);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .detail-item dd {
+            margin: 0;
+            overflow-wrap: anywhere;
+        }
+
+        .data-table-wrap {
+            max-width: 100%;
+            margin-bottom: 1rem;
+            overflow: auto;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.8125rem;
+        }
+
+        .data-table th {
+            position: sticky;
+            top: 0;
+            z-index: 1;
+            padding: 0.625rem 0.75rem;
+            border-bottom: 1px solid var(--pingly-border-strong);
+            color: var(--pingly-text-muted);
+            background: var(--pingly-surface-subtle);
+            font-size: 0.6875rem;
+            font-weight: 600;
+            text-align: left;
+            white-space: nowrap;
+        }
+
+        .data-table td {
+            min-width: 5.5rem;
+            padding: 0.6875rem 0.75rem;
+            border-bottom: 1px solid var(--pingly-border);
+            vertical-align: top;
+        }
+
+        .data-table tr:last-child td {
+            border-bottom: 0;
+        }
+
+        .data-table tbody tr:hover {
+            background: var(--pingly-hover);
+        }
+
+        .data-table .table-active {
+            background: var(--pingly-accent-muted);
+        }
+
+        .route-method {
+            min-width: 2.75rem;
+            justify-content: center;
+            border-color: var(--pingly-brand);
+            color: var(--pingly-brand-text);
+            background: var(--pingly-brand);
+            font-family: var(--pingly-font-mono);
+        }
+
+        .protocol-list {
+            margin: 0 0 1rem;
+            overflow: hidden;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .protocol-item + .protocol-item {
+            border-top: 1px solid var(--pingly-border);
+        }
+
+        .protocol-summary {
+            display: flex;
+            min-height: 2.75rem;
+            align-items: center;
+            gap: 0.625rem;
+            padding: 0.6875rem 0.875rem;
+            cursor: pointer;
+            list-style: none;
+        }
+
+        .protocol-summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .protocol-summary:hover {
+            background: var(--pingly-hover);
+        }
+
+        .protocol-summary::after {
+            width: 0.4375rem;
+            height: 0.4375rem;
+            margin-left: 0.25rem;
+            border-right: 1px solid currentColor;
+            border-bottom: 1px solid currentColor;
+            content: "";
+            transform: rotate(45deg);
+            transition: transform 120ms ease;
+        }
+
+        details[open] > .protocol-summary::after {
+            transform: rotate(225deg);
+        }
+
+        .protocol-body {
+            padding: 0.875rem;
+            border-top: 1px solid var(--pingly-border);
+            background: var(--pingly-surface-subtle);
+        }
+
+        .protocol-token {
+            font-family: var(--pingly-font-mono);
+            overflow-wrap: anywhere;
+        }
+
+        .btn {
+            display: inline-flex;
+            min-height: 2.125rem;
+            align-items: center;
+            justify-content: center;
+            gap: 0.4375rem;
+            padding: 0.375rem 0.75rem;
+            border: 1px solid var(--button-default-borderColor-rest);
+            border-radius: var(--pingly-radius);
+            color: var(--button-default-fgColor-rest);
+            background: var(--button-default-bgColor-rest);
+            box-shadow: var(--pingly-shadow-small);
+            font-weight: 650;
+            line-height: 1.2;
+            text-decoration: none;
+            cursor: pointer;
+            transition:
+                border-color 120ms ease,
+                color 120ms ease,
+                background-color 120ms ease,
+                box-shadow 120ms ease,
+                transform 120ms ease;
+        }
+
+        .btn:disabled {
+            color: var(--button-default-fgColor-disabled);
+            background: var(--button-default-bgColor-disabled);
+            box-shadow: none;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            border-color: var(--pingly-brand);
+            color: var(--pingly-brand-text);
+            background: var(--pingly-brand);
+        }
+
+        .btn-primary:hover {
+            border-color: var(--pingly-brand-hover);
+            color: var(--pingly-brand-text);
+            background: var(--pingly-brand-hover);
+            box-shadow: var(--pingly-shadow-raised);
+            transform: translateY(-1px);
+        }
+
+        .btn-outline-secondary {
+            border-color: var(--button-default-borderColor-rest);
+            color: var(--button-default-fgColor-rest);
+            background: var(--button-default-bgColor-rest);
+        }
+
+        .btn-outline-secondary:hover {
+            border-color: var(--button-default-borderColor-hover);
+            background: var(--button-default-bgColor-hover);
+            box-shadow: var(--pingly-shadow-raised);
+        }
+
+        .btn-success {
+            border-color: var(--pingly-green);
+            color: var(--pingly-text-inverse);
+            background: var(--pingly-green);
+        }
+
+        .bg-secondary-lt {
+            border-color: var(--pingly-border);
+            background: var(--pingly-surface-subtle);
+        }
+
+        .bg-blue-lt {
+            border-color: var(--pingly-blue-border);
+            background: var(--pingly-blue-muted);
+        }
+
+        .text-blue {
+            color: var(--pingly-blue);
+        }
+
+        .bg-red-lt {
+            border-color: var(--borderColor-danger-muted);
+            background: var(--bgColor-danger-muted);
+        }
+
+        .text-red {
+            color: var(--fgColor-danger);
+        }
+
+        .bg-green-lt {
+            border-color: var(--borderColor-success-muted);
+            background: var(--bgColor-success-muted);
+        }
+
+        .text-green {
+            color: var(--fgColor-success);
+        }
+
+        .bg-warning-lt {
+            border-color: var(--borderColor-attention-muted);
+            background: var(--bgColor-attention-muted);
+        }
+
+        .text-warning {
+            color: var(--fgColor-attention);
+        }
+
+        .bg-blue {
+            background: var(--pingly-blue);
+        }
+
+        .bg-green {
+            background: var(--pingly-green);
+        }
+
+        .bg-red {
+            background: var(--pingly-danger);
+        }
+
+        .btn-sm {
+            padding: 0.25rem 0.625rem;
+            font-size: 0.75rem;
+        }
+
+        .spinner-border {
+            display: inline-block;
+            width: 0.875rem;
+            height: 0.875rem;
+            border: 2px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spinner 700ms linear infinite;
+        }
+
+        @keyframes spinner {
+            to {
+                transform: rotate(360deg);
+            }
+        }
+
+        .proxy-probe-control,
+        .proxy-verdict {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .proxy-progress {
+            height: 0.25rem;
+            margin-top: 0.875rem;
+            overflow: hidden;
+            border-radius: 999px;
+            background: var(--pingly-surface-strong);
+        }
+
+        .proxy-progress-bar {
+            height: 100%;
+            background: var(--pingly-accent);
+            transition: width 180ms ease;
+        }
+
+        .proxy-chart {
+            display: grid;
+            gap: 0.625rem;
+            margin-top: 1rem;
+        }
+
+        .proxy-chart-row {
+            display: grid;
+            grid-template-columns: minmax(7rem, 10rem) minmax(7rem, 1fr) 5rem;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .proxy-chart-track {
+            height: 0.375rem;
+            overflow: hidden;
+            border-radius: 999px;
+            background: var(--pingly-surface-strong);
+        }
+
+        .proxy-chart-fill {
+            height: 100%;
+            border-radius: inherit;
+            background: var(--pingly-blue);
+        }
+
+        .proxy-chart-fill-tcp {
+            background: var(--pingly-accent);
+        }
+
+        .proxy-chart-fill-tls {
+            background: var(--pingly-green);
+        }
+
+        .proxy-chart-fill-application {
+            background: var(--pingly-violet);
+        }
+
+        .websocket-control {
+            margin-bottom: 1rem;
+            padding: 1rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .websocket-control-row {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) auto auto;
+            align-items: center;
+            gap: 1rem;
+        }
+
+        .websocket-endpoint {
+            min-width: 0;
+        }
+
+        .websocket-endpoint-label {
+            display: block;
+            margin-bottom: 0.25rem;
+            color: var(--pingly-text-muted);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .websocket-url {
+            display: block;
+            overflow: hidden;
+            color: var(--pingly-blue);
+            font-size: 0.8125rem;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .websocket-connection-actions {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .websocket-transport {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .websocket-transport .websocket-endpoint-label {
+            margin-bottom: 0;
+        }
+
+        .websocket-status {
+            display: inline-flex;
+            min-height: 1.75rem;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0 0.625rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: 999px;
+            color: var(--pingly-text-muted);
+            background: var(--pingly-surface);
+            font-size: 0.75rem;
+            font-weight: 600;
+            white-space: nowrap;
+        }
+
+        .websocket-status[data-state="connecting"],
+        .websocket-status[data-state="analyzing"],
+        .websocket-status[data-state="preparing"] {
+            border-color: var(--pingly-blue-border);
+            color: var(--pingly-blue);
+            background: var(--pingly-blue-muted);
+        }
+
+        .websocket-status[data-state="open"] {
+            border-color: var(--pingly-green-border);
+            color: var(--pingly-green);
+            background: var(--pingly-green-muted);
+        }
+
+        .websocket-status[data-state="error"] {
+            border-color: var(--pingly-danger-border);
+            color: var(--pingly-danger);
+            background: var(--pingly-danger-muted);
+        }
+
+        .websocket-status .status-dot {
+            background: currentColor;
+        }
+
+        .websocket-debug-grid {
+            display: grid;
+            grid-template-columns: minmax(17rem, 0.8fr) minmax(22rem, 1.2fr);
+            align-items: start;
+            gap: 1rem;
+        }
+
+        .websocket-tool {
+            min-width: 0;
+            overflow: hidden;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .websocket-tool-header {
+            display: flex;
+            min-height: 3rem;
+            align-items: center;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 0.75rem;
+            padding: 0.625rem 0.75rem;
+            border-bottom: 1px solid var(--pingly-border);
+            background: var(--pingly-surface-subtle);
+        }
+
+        .websocket-tool-header h3 {
+            margin: 0;
+            font-size: 0.875rem;
+            font-weight: 650;
+        }
+
+        .websocket-composer {
+            padding: 0.75rem;
+        }
+
+        .websocket-mode {
+            display: inline-flex;
+            padding: 0.1875rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-subtle);
+        }
+
+        .websocket-mode-button {
+            min-height: 1.75rem;
+            padding: 0.25rem 0.625rem;
+            border: 0;
+            border-radius: var(--pingly-radius-small);
+            color: var(--pingly-text-muted);
+            background: transparent;
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
+        .websocket-mode-button:hover {
+            color: var(--pingly-text);
+        }
+
+        .websocket-mode-button:disabled {
+            opacity: 0.55;
+            cursor: not-allowed;
+        }
+
+        .websocket-mode-button.active {
+            color: var(--pingly-brand-text);
+            background: var(--pingly-brand);
+            box-shadow: var(--pingly-shadow-small);
+        }
+
+        .websocket-input-label {
+            display: block;
+            margin-bottom: 0.375rem;
+            color: var(--pingly-text-muted);
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+
+        .websocket-input {
+            display: block;
+            width: 100%;
+            min-height: 11rem;
+            max-height: 28rem;
+            padding: 0.75rem;
+            resize: vertical;
+            border: 1px solid var(--pingly-border-strong);
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-text);
+            background: var(--pingly-surface);
+            font-family: var(--pingly-font-mono);
+            font-size: 0.8125rem;
+            line-height: 1.55;
+        }
+
+        .websocket-input:focus {
+            border-color: var(--pingly-accent);
+        }
+
+        .websocket-send-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.75rem;
+            margin-top: 0.75rem;
+        }
+
+        .websocket-size {
+            color: var(--pingly-text-muted);
+            font-family: var(--pingly-font-mono);
+            font-size: 0.6875rem;
+        }
+
+        .websocket-log {
+            min-height: 18rem;
+            max-height: 32rem;
+            overflow-y: auto;
+            color: var(--pingly-code-text);
+            background: var(--pingly-code);
+            scrollbar-color: var(--pingly-border-strong) var(--pingly-code);
+        }
+
+        .websocket-log-empty {
+            display: grid;
+            min-height: 18rem;
+            place-items: center;
+            padding: 2rem;
+            color: var(--pingly-code-muted);
+            font-size: 0.8125rem;
+            text-align: center;
+        }
+
+        .websocket-message {
+            padding: 0.75rem;
+            border-bottom: 1px solid rgb(255 255 255 / 0.09);
+        }
+
+        .websocket-message:last-child {
+            border-bottom: 0;
+        }
+
+        .websocket-message[data-direction="inbound"] {
+            border-left: 2px solid var(--pingly-blue);
+        }
+
+        .websocket-message[data-direction="outbound"] {
+            border-left: 2px solid var(--pingly-accent);
+        }
+
+        .websocket-message[data-direction="system"] {
+            border-left: 2px solid var(--pingly-text-subtle);
+        }
+
+        .websocket-message-header {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-bottom: 0.375rem;
+            color: var(--pingly-code-muted);
+            font-size: 0.6875rem;
+        }
+
+        .websocket-message-direction {
+            color: var(--pingly-code-text);
+            font-weight: 600;
+        }
+
+        .websocket-message-time {
+            margin-left: auto;
+            white-space: nowrap;
+        }
+
+        .websocket-message pre {
+            margin: 0;
+            overflow-wrap: anywhere;
+            color: var(--pingly-code-text);
+            font-size: 0.75rem;
+            line-height: 1.55;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .websocket-message-note {
+            display: block;
+            margin-top: 0.375rem;
+            color: var(--pingly-code-muted);
+            font-size: 0.6875rem;
+        }
+
+        .json-panel {
+            overflow: hidden;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-raised);
+        }
+
+        .json-header {
+            display: grid;
+            gap: 0.875rem;
+            padding: 1rem;
+            border-bottom: 1px solid var(--pingly-border);
+        }
+
+        .json-title-row {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+
+        .json-title {
+            min-width: 0;
+        }
+
+        .json-title h2 {
+            display: inline;
+            margin: 0;
+            font-size: 1rem;
+        }
+
+        .json-title code {
+            margin-left: 0.5rem;
+        }
+
+        .json-route-options {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.375rem;
+        }
+
+        .json-route-options .nav-link {
+            display: inline-flex;
+            min-height: 1.875rem;
+            align-items: center;
+            gap: 0.375rem;
+            padding: 0.25rem 0.625rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-text-muted);
+            background: var(--pingly-surface);
+            box-shadow: var(--pingly-shadow-small);
+            font-size: 0.75rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition:
+                border-color 120ms ease,
+                color 120ms ease,
+                background-color 120ms ease,
+                transform 120ms ease;
+        }
+
+        .json-route-options .nav-link:hover {
+            border-color: var(--pingly-border-strong);
+            color: var(--pingly-text);
+            background: var(--pingly-surface-raised);
+            transform: translateY(-1px);
+        }
+
+        .json-route-options .nav-link.active {
+            border-color: var(--pingly-brand);
+            color: var(--pingly-brand-text);
+            background: var(--pingly-brand);
+        }
+
+        .json-route-options .nav-link:disabled {
+            cursor: wait;
+            opacity: 0.75;
+        }
+
+        .json-route-spinner {
+            display: none;
+        }
+
+        .json-route-options .is-loading .json-route-spinner {
+            display: inline-block;
+        }
+
+        .json-code {
+            min-height: 28rem;
+            max-height: calc(100dvh - 17rem);
+            margin: 0;
+            padding: 1rem;
+            overflow: auto;
+            color: var(--pingly-code-text);
+            background: var(--pingly-code);
+            font-size: 0.75rem;
+            line-height: 1.55;
+            tab-size: 2;
+            scrollbar-color: var(--pingly-border-strong) var(--pingly-code);
+        }
+
+        .state-panel {
+            display: grid;
+            min-height: 18rem;
+            place-items: center;
+            padding: 2rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+            text-align: center;
+        }
+
+        .empty {
+            display: flex;
+            min-height: 18rem;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            padding: 2rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+            box-shadow: var(--pingly-shadow-small);
+            text-align: center;
+        }
+
+        .state-panel-inner,
+        .empty > * {
+            max-width: 32rem;
+        }
+
+        .state-panel h1,
+        .empty-title {
+            margin: 0.75rem 0 0.375rem;
+            font-size: 1rem;
+        }
+
+        .state-panel p,
+        .empty-subtitle {
+            margin: 0 0 1rem;
+            color: var(--pingly-text-muted);
+        }
+
+        .state-icon,
+        .empty-icon {
+            display: inline-grid;
+            width: 2.5rem;
+            height: 2.5rem;
+            margin: 0 auto;
+            place-items: center;
+            border: 1px solid var(--pingly-accent-border);
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-accent-text);
+            background: var(--pingly-accent-muted);
+        }
+
+        .loading-state {
+            display: grid;
+            gap: 1.25rem;
+        }
+
+        .loading-heading {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 1rem;
+        }
+
+        .placeholder {
+            display: block;
+            height: 0.75rem;
+            border-radius: 999px;
+            background: var(--pingly-surface-strong);
+            animation: placeholder-pulse 1.5s ease-in-out infinite;
+        }
+
+        .placeholder-title {
+            width: min(16rem, 65%);
+            height: 1.75rem;
+        }
+
+        .placeholder-meta {
+            width: 8rem;
+        }
+
+        .loading-summary {
+            display: grid;
+            overflow: hidden;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            background: var(--pingly-surface-raised);
+        }
+
+        .loading-summary > div {
+            padding: 1.25rem;
+        }
+
+        .loading-summary > div + div {
+            border-left: 1px solid var(--pingly-border);
+        }
+
+        .loading-block {
+            height: 13rem;
+            border: 1px solid var(--pingly-border);
+            border-radius: var(--pingly-radius);
+            background: var(--pingly-surface-raised);
+        }
+
+        @keyframes placeholder-pulse {
+            50% {
+                opacity: 0.45;
+            }
+        }
+
+        .toast-container {
+            position: fixed;
+            right: 1rem;
+            bottom: 1rem;
+            z-index: 140;
+        }
+
+        .toast {
+            max-width: min(24rem, calc(100vw - 2rem));
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--pingly-code-surface);
+            border-radius: var(--pingly-radius);
+            color: var(--pingly-code-text);
+            background: var(--pingly-code);
+            box-shadow: var(--pingly-shadow-raised);
+            font-size: 0.8125rem;
+        }
+
+        .pingly-footer {
+            padding: 2rem 0;
+            color: var(--pingly-text-muted);
+            font-size: 0.75rem;
+            text-align: center;
+        }
+
+        .pingly-footer a {
+            font-weight: 600;
+        }
+
+        .d-flex {
+            display: flex;
+        }
+
+        .d-block {
+            display: block;
+        }
+
+        .d-inline-flex {
+            display: inline-flex;
+        }
+
+        .bg-body-tertiary {
+            background: var(--pingly-surface-subtle);
+        }
+
+        .flex-column {
+            flex-direction: column;
+        }
+
+        .flex-lg-row {
+            flex-direction: row;
+        }
+
+        .flex-wrap {
+            flex-wrap: wrap;
+        }
+
+        .flex-fill {
+            flex: 1 1 auto;
+        }
+
+        .flex-shrink-0 {
+            flex-shrink: 0;
+        }
+
+        .align-items-center,
+        .align-items-lg-center {
+            align-items: center;
+        }
+
+        .align-items-start {
+            align-items: flex-start;
+        }
+
+        .align-items-end {
+            align-items: flex-end;
+        }
+
+        .justify-content-between {
+            justify-content: space-between;
+        }
+
+        .gap-1 {
+            gap: 0.25rem;
+        }
+
+        .gap-2 {
+            gap: 0.5rem;
+        }
+
+        .gap-3 {
+            gap: 0.75rem;
+        }
+
+        .vstack {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .ms-auto {
+            margin-left: auto;
+        }
+
+        .me-2 {
+            margin-right: 0.5rem;
+        }
+
+        .mt-2 {
+            margin-top: 0.5rem;
+        }
+
+        .mt-3 {
+            margin-top: 0.75rem;
+        }
+
+        .mt-4 {
+            margin-top: 1rem;
+        }
+
+        .mb-0 {
+            margin-bottom: 0;
+        }
+
+        .mb-1 {
+            margin-bottom: 0.25rem;
+        }
+
+        .mb-2 {
+            margin-bottom: 0.5rem;
+        }
+
+        .mb-3 {
+            margin-bottom: 0.75rem;
+        }
+
+        .mb-4 {
+            margin-bottom: 1rem;
+        }
+
+        .mb-5 {
+            margin-bottom: 2.25rem;
+        }
+
+        .p-2 {
+            padding: 0.5rem;
+        }
+
+        .p-3 {
+            padding: 0.75rem;
+        }
+
+        .py-2 {
+            padding-top: 0.5rem;
+            padding-bottom: 0.5rem;
+        }
+
+        .py-5 {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+
+        .px-0 {
+            padding-right: 0;
+            padding-left: 0;
+        }
+
+        .px-2 {
+            padding-right: 0.5rem;
+            padding-left: 0.5rem;
+        }
+
+        .pt-3 {
+            padding-top: 0.75rem;
+        }
+
+        .ps-3 {
+            padding-left: 0.75rem;
+        }
+
+        .border,
+        .border-top,
+        .border-bottom,
+        .border-start {
+            border-color: var(--borderColor-muted) !important;
+        }
+
+        .border {
+            border: 1px solid var(--borderColor-muted);
+        }
+
+        .border-top {
+            border-top: 1px solid var(--borderColor-muted);
+        }
+
+        .border-bottom {
+            border-bottom: 1px solid var(--borderColor-muted);
+        }
+
+        .border-start {
+            border-left: 1px solid var(--borderColor-muted);
+        }
+
+        .border-3 {
+            border-left-width: 2px;
+        }
+
+        .rounded-2 {
+            border-radius: var(--pingly-radius);
+        }
+
+        .overflow-hidden {
+            overflow: hidden;
+        }
+
+        .overflow-auto {
+            overflow: auto;
+        }
+
+        .text-secondary {
+            color: var(--fgColor-muted) !important;
+        }
+
+        .text-body {
+            color: var(--fgColor-default) !important;
+        }
+
+        .text-break {
+            overflow-wrap: anywhere;
+            word-break: break-word;
+        }
+
+        .text-end {
+            text-align: right;
+        }
+
+        .text-start {
+            text-align: left;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+
+        .text-wrap {
+            white-space: normal;
+        }
+
+        .text-uppercase {
+            text-transform: uppercase;
+        }
+
+        .fw-medium {
+            font-weight: 500;
+        }
+
+        .fw-semibold,
+        .fw-bold {
+            font-weight: 600;
+        }
+
+        .small {
+            font-size: 0.75rem;
+        }
+
+        .rounded-pill {
+            border-radius: 999px;
+        }
+
+        .cursor-pointer {
+            cursor: pointer;
+        }
+
+        .user-select-all {
+            user-select: all;
+        }
+
+        @media (max-width: 63.99rem) {
+            .summary-grid,
+            .loading-summary {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+
+            .websocket-debug-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .summary-item:nth-child(3),
+            .summary-item:nth-child(4),
+            .loading-summary > div:nth-child(3),
+            .loading-summary > div:nth-child(4) {
+                border-top: 1px solid var(--borderColor-muted);
+            }
+
+            .summary-item:nth-child(3),
+            .loading-summary > div:nth-child(3) {
+                border-left: 0;
+            }
+        }
+
+        @media (min-width: 48rem) and (max-width: 55.99rem) {
+            .row.g-3 {
+                grid-template-columns: minmax(0, 1fr);
+            }
+        }
+
+        @media (max-width: 47.99rem) {
+            .app-header-inner {
+                padding: 0 0.75rem;
+            }
+
+            .desktop-only {
+                display: none !important;
+            }
+
+            .app-layout {
+                display: block;
+            }
+
+            .app-sidebar {
+                position: fixed;
+                z-index: 110;
+                top: var(--pingly-header-height) !important;
+                bottom: 0;
+                left: 0;
+                width: min(17rem, 86vw);
+                height: auto;
+                transform: translateX(-102%);
+                transition: transform 160ms ease;
+            }
+
+            .app-sidebar.is-open {
+                transform: translateX(0);
+            }
+
+            .sidebar-backdrop {
+                position: fixed;
+                z-index: 105;
+                inset: var(--pingly-header-height) 0 0;
+                display: block;
+                background: var(--overlay-backdrop-bgColor, rgba(0, 0, 0, 0.45));
+            }
+
+            body.mobile-sidebar-open {
+                overflow: hidden;
+            }
+
+            .content-shell {
+                padding: 1.25rem 0.875rem 0;
+            }
+
+            .view-heading {
+                align-items: flex-start;
+                flex-direction: column;
+                margin-bottom: 1.25rem;
+            }
+
+            .capture-time {
+                width: 100%;
+            }
+
+            .summary-grid {
+                margin-bottom: 1.5rem;
+            }
+
+            .summary-item {
+                padding: 0.875rem;
+            }
+
+            .summary-row {
+                grid-template-columns: 1.75rem minmax(0, 1fr);
+                gap: 0.625rem;
+            }
+
+            .summary-icon {
+                width: 1.75rem;
+                height: 1.75rem;
+            }
+
+            .summary-value {
+                font-size: 0.75rem;
+            }
+
+            .row.g-3,
+            .detail-grid {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .detail-item,
+            .detail-item:nth-child(odd),
+            .detail-item:nth-last-child(-n + 2) {
+                border-right: 0;
+                border-bottom: 1px solid var(--borderColor-muted);
+            }
+
+            .detail-item:last-child {
+                border-bottom: 0;
+            }
+
+            .json-code {
+                min-height: 24rem;
+                max-height: none;
+            }
+
+            .proxy-chart-row {
+                grid-template-columns: minmax(0, 1fr) 4.5rem;
+            }
+
+            .proxy-chart-track {
+                grid-column: 1 / -1;
+                grid-row: 2;
+            }
+
+            .websocket-control-row {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .websocket-transport {
+                justify-content: space-between;
+            }
+
+            .websocket-connection-actions {
+                justify-content: space-between;
+            }
+
+            .flex-lg-row {
+                flex-direction: column;
+            }
+
+            .align-items-lg-center {
+                align-items: stretch;
+            }
+        }
+
+        @media (min-width: 48rem) {
+            .mobile-only {
+                display: none !important;
+            }
+        }
+
+        @media (max-width: 27.99rem) {
+            .brand-copy small,
+            .capture-status {
+                display: none;
+            }
+        }
+
+        @media (max-width: 21.99rem) {
+            .summary-grid,
+            .loading-summary {
+                grid-template-columns: minmax(0, 1fr);
+            }
+
+            .summary-item + .summary-item,
+            .summary-item:nth-child(3),
+            .loading-summary > div + div,
+            .loading-summary > div:nth-child(3) {
+                border-top: 1px solid var(--borderColor-muted);
+                border-left: 0;
+            }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            *,
+            *::before,
+            *::after {
+                scroll-behavior: auto !important;
+                animation-duration: 0.01ms !important;
+                animation-iteration-count: 1 !important;
+                transition-duration: 0.01ms !important;
+            }
+        }
+    </style>
+    <script
+        src="https://cdn.jsdelivr.net/npm/lucide@1.24.0/dist/umd/lucide.min.js"
+        integrity="sha384-mooE85Luwgx+AyykX7e90VcN8/QCFTSIwPuHLmvcsLVoA0en7lKYb9XlOzn5G2co"
+        crossorigin="anonymous"
+        defer
+        referrerpolicy="no-referrer"
+    ></script>
+</head>
+<body>
+    <a class="skip-link btn btn-primary" href="#main-content">
+        Skip to analysis
+    </a>
+
+    <div class="app-shell">
+        <header class="app-header" id="app-header">
+            <div class="app-header-inner">
+                <button
+                    class="btn icon-button mobile-only"
+                    id="sidebar-toggle"
+                    type="button"
+                    title="Open analysis navigation"
+                    aria-label="Open analysis navigation"
+                    aria-controls="analysis-sidebar"
+                    aria-expanded="false"
+                >
+                    <i data-lucide="menu" aria-hidden="true"></i>
+                </button>
+
+                <a class="app-brand" href="/" aria-label="Pingly home">
+                    <span class="brand-mark" aria-hidden="true">P</span>
+                    <span class="brand-copy">
+                        <strong>Pingly</strong>
+                        <small>Protocol Inspector</small>
+                    </span>
+                </a>
+
+                <div class="header-actions">
+                    <span
+                        class="capture-status desktop-only"
+                        id="capture-status"
+                        data-state="loading"
+                        role="status"
+                        aria-live="polite"
+                    >
+                        <span
+                            class="status-dot status-dot-animated"
+                            id="capture-status-dot"
+                            aria-hidden="true"
+                        ></span>
+                        <span id="capture-status-label">Connecting</span>
+                    </span>
+
+                    <button
+                        class="btn icon-button"
+                        id="theme-button"
+                        type="button"
+                        title="Toggle color theme"
+                        aria-label="Toggle color theme"
+                    >
+                        <i data-lucide="moon" aria-hidden="true"></i>
+                    </button>
+
+                    <button
+                        class="btn icon-button desktop-only"
+                        id="download-button"
+                        type="button"
+                        title="Download analysis JSON"
+                        aria-label="Download analysis JSON"
+                        disabled
+                    >
+                        <i data-lucide="download" aria-hidden="true"></i>
+                    </button>
+
+                    <a
+                        class="btn icon-button"
+                        href="https://github.com/0x676e67/pingly"
+                        target="_blank"
+                        rel="noreferrer"
+                        title="View Pingly on GitHub"
+                        aria-label="View Pingly on GitHub"
+                    >
+                        <span class="github-icon" aria-hidden="true"></span>
+                    </a>
+                </div>
+            </div>
+        </header>
+
+        <div
+            class="sidebar-backdrop"
+            id="analysis-sidebar-backdrop"
+            aria-hidden="true"
+            hidden
+        ></div>
+
+        <div class="app-layout">
+            <aside
+                class="app-sidebar"
+                id="analysis-sidebar"
+                aria-label="Analysis views"
+                aria-hidden="true"
+            >
+                <nav
+                    class="sidebar-nav"
+                    id="analysis-nav"
+                    role="tablist"
+                    aria-orientation="vertical"
+                >
+                    <button
+                        class="sidebar-item active"
+                        type="button"
+                        role="tab"
+                        aria-selected="true"
+                        aria-controls="panel-overview"
+                        data-view="overview"
+                    >
+                        <i data-lucide="layout-dashboard" aria-hidden="true"></i>
+                        <span>Overview</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-tls"
+                        data-view="tls"
+                    >
+                        <i data-lucide="shield-check" aria-hidden="true"></i>
+                        <span>TLS</span>
+                        <span class="nav-count" id="tls-count">0</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-http"
+                        data-view="http"
+                    >
+                        <i data-lucide="rows-3" aria-hidden="true"></i>
+                        <span>HTTP</span>
+                        <span class="nav-count" id="http-count">0</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-h2"
+                        data-view="h2"
+                    >
+                        <i data-lucide="network" aria-hidden="true"></i>
+                        <span>HTTP/2</span>
+                        <span class="nav-count" id="h2-count">0</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-h3"
+                        data-view="h3"
+                    >
+                        <i data-lucide="radio-tower" aria-hidden="true"></i>
+                        <span>HTTP/3</span>
+                        <span class="nav-count" id="h3-count">0</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-websocket"
+                        data-view="ws"
+                    >
+                        <i data-lucide="messages-square" aria-hidden="true"></i>
+                        <span>WebSocket</span>
+                        <span class="nav-count" id="websocket-count">0</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-tcp"
+                        data-view="tcp"
+                    >
+                        <i data-lucide="waypoints" aria-hidden="true"></i>
+                        <span>TCP</span>
+                        <span class="nav-count" id="tcp-count">0</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-proxy"
+                        data-view="proxy"
+                    >
+                        <i data-lucide="scan-search" aria-hidden="true"></i>
+                        <span>Latency</span>
+                    </button>
+                    <button
+                        class="sidebar-item"
+                        type="button"
+                        role="tab"
+                        aria-selected="false"
+                        aria-controls="panel-json"
+                        data-view="json"
+                    >
+                        <i data-lucide="braces" aria-hidden="true"></i>
+                        <span>JSON</span>
+                    </button>
+                </nav>
+            </aside>
+
+            <main class="app-main" id="main-content" tabindex="-1">
+                <div class="content-shell">
+                    <section class="loading-state" id="loading-state" aria-live="polite">
+                        <div class="loading-heading">
+                            <span class="placeholder placeholder-title"></span>
+                            <span class="placeholder placeholder-meta"></span>
+                        </div>
+                        <div class="loading-summary" aria-hidden="true">
+                            <div><span class="placeholder"></span></div>
+                            <div><span class="placeholder"></span></div>
+                            <div><span class="placeholder"></span></div>
+                            <div><span class="placeholder"></span></div>
+                        </div>
+                        <div class="loading-block" aria-hidden="true"></div>
+                    </section>
+
+                    <section class="state-panel" id="error-state" role="alert" hidden>
+                        <div class="state-panel-inner">
+                            <span class="state-icon" aria-hidden="true">
+                                <i data-lucide="circle-alert"></i>
+                            </span>
+                            <h1>Analysis unavailable</h1>
+                            <p id="error-message">The request could not be analyzed.</p>
+                            <button class="btn btn-primary" id="retry-button" type="button">
+                                <i data-lucide="refresh-cw" aria-hidden="true"></i>
+                                Try again
+                            </button>
+                        </div>
+                    </section>
+
+                    <div id="analysis-workspace" hidden>
+                        <header class="view-heading">
+                            <div>
+                                <p class="view-context" id="view-eyebrow">Current request</p>
+                                <h1 id="view-title">Connection analysis</h1>
+                            </div>
+                            <time class="capture-time" id="captured-at">Captured just now</time>
+                        </header>
+
+                        <section class="summary-grid" aria-label="Connection summary">
+                            <article class="summary-item">
+                                <div class="summary-row">
+                                    <span class="summary-icon" aria-hidden="true">
+                                        <i data-lucide="map-pin"></i>
+                                    </span>
+                                    <div>
+                                        <div class="summary-label">Remote address</div>
+                                        <strong class="summary-value" id="summary-address">Unavailable</strong>
+                                    </div>
+                                </div>
+                            </article>
+                            <article class="summary-item">
+                                <div class="summary-row">
+                                    <span class="summary-icon" aria-hidden="true">
+                                        <i data-lucide="arrow-up-right"></i>
+                                    </span>
+                                    <div>
+                                        <div class="summary-label">Request</div>
+                                        <strong class="summary-value" id="summary-http">Unavailable</strong>
+                                    </div>
+                                </div>
+                            </article>
+                            <article class="summary-item">
+                                <div class="summary-row">
+                                    <span class="summary-icon" aria-hidden="true">
+                                        <i data-lucide="shield-check"></i>
+                                    </span>
+                                    <div>
+                                        <div class="summary-label">Negotiated TLS</div>
+                                        <strong class="summary-value" id="summary-tls">Unavailable</strong>
+                                    </div>
+                                </div>
+                            </article>
+                            <article class="summary-item">
+                                <div class="summary-row">
+                                    <span class="summary-icon" aria-hidden="true">
+                                        <i data-lucide="network"></i>
+                                    </span>
+                                    <div>
+                                        <div class="summary-label">Protocol frames</div>
+                                        <strong class="summary-value" id="summary-frames">0</strong>
+                                    </div>
+                                </div>
+                            </article>
+                        </section>
+
+                        <section id="panel-overview" role="tabpanel" data-panel="overview">
+                            <div id="overview-content"></div>
+                        </section>
+                        <section id="panel-tls" role="tabpanel" data-panel="tls" hidden>
+                            <div id="tls-content"></div>
+                        </section>
+                        <section id="panel-http" role="tabpanel" data-panel="http" hidden>
+                            <div id="http-content"></div>
+                        </section>
+                        <section id="panel-h2" role="tabpanel" data-panel="h2" hidden>
+                            <div id="h2-content"></div>
+                        </section>
+                        <section id="panel-h3" role="tabpanel" data-panel="h3" hidden>
+                            <div id="h3-content"></div>
+                        </section>
+                        <section
+                            id="panel-websocket"
+                            role="tabpanel"
+                            data-panel="ws"
+                            hidden
+                        >
+                            <section class="analysis-section">
+                                <div class="section-heading">
+                                    <div>
+                                        <p class="page-pretitle">Live connection</p>
+                                        <h2>WebSocket session</h2>
+                                    </div>
+                                </div>
+                                <div class="websocket-control">
+                                    <div class="websocket-control-row">
+                                        <div class="websocket-endpoint">
+                                            <span class="websocket-endpoint-label">Endpoint</span>
+                                            <code class="websocket-url" id="websocket-url"></code>
+                                        </div>
+                                        <div class="websocket-transport">
+                                            <span class="websocket-endpoint-label">
+                                                HTTP version
+                                            </span>
+                                            <div
+                                                class="websocket-mode"
+                                                role="group"
+                                                aria-label="WebSocket HTTP version"
+                                            >
+                                                <button
+                                                    class="websocket-mode-button active"
+                                                    type="button"
+                                                    data-websocket-transport="http1"
+                                                    aria-pressed="true"
+                                                >
+                                                    HTTP/1.1
+                                                </button>
+                                                <button
+                                                    class="websocket-mode-button"
+                                                    type="button"
+                                                    data-websocket-transport="http2"
+                                                    aria-pressed="false"
+                                                >
+                                                    HTTP/2
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="websocket-connection-actions">
+                                            <span
+                                                class="websocket-status"
+                                                id="websocket-status"
+                                                data-state="idle"
+                                                role="status"
+                                                aria-live="polite"
+                                            >
+                                                <span
+                                                    class="status-dot"
+                                                    id="websocket-status-dot"
+                                                    aria-hidden="true"
+                                                ></span>
+                                                <span id="websocket-status-label">Ready</span>
+                                            </span>
+                                            <button
+                                                class="btn btn-primary"
+                                                id="websocket-connect-button"
+                                                type="button"
+                                            >
+                                                <i data-lucide="plug" aria-hidden="true"></i>
+                                                <span>Connect</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <section class="analysis-section">
+                                <div class="section-heading">
+                                    <div>
+                                        <p class="page-pretitle">Messages</p>
+                                        <h2>Message debugger</h2>
+                                    </div>
+                                    <span class="text-secondary small" id="websocket-message-count">
+                                        0 messages
+                                    </span>
+                                </div>
+                                <div class="websocket-debug-grid">
+                                    <div class="websocket-tool">
+                                        <div class="websocket-tool-header">
+                                            <h3>Send message</h3>
+                                            <div
+                                                class="websocket-mode"
+                                                role="group"
+                                                aria-label="Message type"
+                                            >
+                                                <button
+                                                    class="websocket-mode-button active"
+                                                    type="button"
+                                                    data-websocket-mode="text"
+                                                    aria-pressed="true"
+                                                >
+                                                    Text
+                                                </button>
+                                                <button
+                                                    class="websocket-mode-button"
+                                                    type="button"
+                                                    data-websocket-mode="binary"
+                                                    aria-pressed="false"
+                                                >
+                                                    Binary
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div class="websocket-composer">
+                                            <label
+                                                class="websocket-input-label"
+                                                for="websocket-message-input"
+                                            >
+                                                Message
+                                            </label>
+                                            <textarea
+                                                class="websocket-input"
+                                                id="websocket-message-input"
+                                                maxlength="262144"
+                                                placeholder="Message text"
+                                                spellcheck="false"
+                                            ></textarea>
+                                            <div class="websocket-send-row">
+                                                <span
+                                                    class="websocket-size"
+                                                    id="websocket-message-size"
+                                                >
+                                                    0 B
+                                                </span>
+                                                <button
+                                                    class="btn btn-primary"
+                                                    id="websocket-send-button"
+                                                    type="button"
+                                                    disabled
+                                                >
+                                                    <i data-lucide="send" aria-hidden="true"></i>
+                                                    Send
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="websocket-tool">
+                                        <div class="websocket-tool-header">
+                                            <h3>Session log</h3>
+                                            <button
+                                                class="btn icon-button"
+                                                id="websocket-clear-button"
+                                                type="button"
+                                                title="Clear messages"
+                                                aria-label="Clear messages"
+                                                disabled
+                                            >
+                                                <i data-lucide="trash-2" aria-hidden="true"></i>
+                                            </button>
+                                        </div>
+                                        <div
+                                            class="websocket-log"
+                                            id="websocket-message-log"
+                                            role="log"
+                                            aria-live="polite"
+                                            aria-relevant="additions"
+                                        >
+                                            <div class="websocket-log-empty">
+                                                No messages
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </section>
+
+                            <div id="websocket-analysis-content"></div>
+                        </section>
+                        <section id="panel-tcp" role="tabpanel" data-panel="tcp" hidden>
+                            <div id="tcp-content"></div>
+                        </section>
+                        <section id="panel-proxy" role="tabpanel" data-panel="proxy" hidden>
+                            <div id="proxy-content"></div>
+                        </section>
+                        <section id="panel-json" role="tabpanel" data-panel="json" hidden>
+                            <div class="json-panel">
+                                <div class="json-header">
+                                    <div class="json-title-row">
+                                        <div class="json-title">
+                                            <p class="page-pretitle">Serialized response</p>
+                                            <h2>Raw JSON</h2>
+                                            <code class="badge" id="json-route-label">/api/all</code>
+                                        </div>
+                                        <button
+                                            class="btn icon-button ms-auto"
+                                            id="copy-json-button"
+                                            type="button"
+                                            title="Copy raw JSON"
+                                            aria-label="Copy raw JSON"
+                                            disabled
+                                        >
+                                            <i data-lucide="copy" aria-hidden="true"></i>
+                                        </button>
+                                    </div>
+                                    <div
+                                        class="json-route-options"
+                                        id="json-route-options"
+                                        role="group"
+                                        aria-label="JSON response route"
+                                    ></div>
+                                </div>
+                                <pre
+                                    class="json-code"
+                                    id="json-content"
+                                    tabindex="0"
+                                ></pre>
+                            </div>
+                        </section>
+
+                        <footer class="pingly-footer">
+                            Powered by
+                            <a
+                                href="https://github.com/0x676e67/pingly"
+                                target="_blank"
+                                rel="noreferrer"
+                            >Pingly</a>
+                        </footer>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <div class="toast-container">
+        <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+    </div>
+
+    <!-- PINGLY_SCRIPT -->
+</body>
+</html>

@@ -1,0 +1,262 @@
+//! Internal macros shared by protocol identifier types.
+
+macro_rules! registry_enum {
+    (
+        $(#[$enum_meta:meta])*
+        $visibility:vis enum $enum_name:ident: $wire_type:ty {
+            $(
+                $(#[$variant_meta:meta])*
+                $variant:ident => $id:literal $(| $alias:literal)*
+            ),* $(,)?
+        }
+
+        fallback($wire_id:ident) {
+            $(
+                $(#[$fallback_meta:meta])*
+                $fallback_variant:ident
+            ),+ $(,)?
+        } => $fallback:expr $(;)?
+    ) => {
+        #[derive(
+            Debug,
+            Clone,
+            Copy,
+            PartialEq,
+            Eq,
+            ::serde::Serialize,
+            ::serde::Deserialize
+        )]
+        $(#[$enum_meta])*
+        $visibility enum $enum_name {
+            $(
+                $(#[$variant_meta])*
+                $variant,
+            )*
+
+            $(
+                $(#[$fallback_meta])*
+                $fallback_variant,
+            )+
+        }
+
+        impl $enum_name {
+            const fn from_wire_id($wire_id: $wire_type) -> Self {
+                match $wire_id {
+                    $($id $(| $alias)* => Self::$variant,)*
+                    _ => $fallback,
+                }
+            }
+        }
+
+        impl From<$wire_type> for $enum_name {
+            fn from($wire_id: $wire_type) -> Self {
+                Self::from_wire_id($wire_id)
+            }
+        }
+    };
+}
+
+macro_rules! identifier_is_grease {
+    ($value:expr, STANDARD_GREASE) => {
+        is_grease_value($value)
+    };
+    ($value:expr, PSK_GREASE) => {
+        is_psk_key_exchange_mode_grease($value)
+    };
+    ($value:expr, NO_GREASE) => {
+        false
+    };
+}
+
+macro_rules! impl_enum_deserialize {
+    (
+        $enum_name:ident,
+        $wire_type:ty,
+        $grease_policy:ident,
+        { $($enum_var:ident),* $(,)? }
+    ) => {
+        impl<'de> ::serde::Deserialize<'de> for $enum_name {
+            fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+            where
+                D: ::serde::Deserializer<'de>,
+            {
+                struct EnumVisitor;
+
+                impl<'de> ::serde::de::Visitor<'de> for EnumVisitor {
+                    type Value = $enum_name;
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut ::std::fmt::Formatter<'_>,
+                    ) -> ::std::fmt::Result {
+                        formatter.write_str(concat!("a serialized ", stringify!($enum_name)))
+                    }
+
+                    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+                    where
+                        E: ::serde::de::Error,
+                    {
+                        match value {
+                            $(stringify!($enum_var) => Ok($enum_name::$enum_var),)*
+                            value => parse_serialized_identifier(value)
+                                .and_then(|(value, requires_grease)| {
+                                    (requires_grease
+                                        == identifier_is_grease!(value, $grease_policy))
+                                    .then_some(value)
+                                })
+                                .and_then(|value| <$wire_type>::try_from(value).ok())
+                                .map($enum_name::from)
+                                .and_then(|value| {
+                                    matches!(value, $enum_name::Unknown(_)).then_some(value)
+                                })
+                                .ok_or_else(|| E::custom(format_args!(
+                                    "invalid serialized {} value {value:?}",
+                                    stringify!($enum_name),
+                                ))),
+                        }
+                    }
+                }
+
+                deserializer.deserialize_str(EnumVisitor)
+            }
+        }
+    };
+}
+
+macro_rules! enum_builder {
+    (
+        $(#[$m:meta])*
+        @U8
+        $grease_policy:ident
+        $enum_vis:vis enum $enum_name:ident
+        { $( $(#[$enum_meta:meta])* $enum_var: ident => $enum_val: expr ),* $(,)? }
+    ) => {
+        $(#[$m])*
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+        $enum_vis enum $enum_name {
+            $(
+                $(#[$enum_meta])*
+                #[doc = concat!("The registered ", stringify!($enum_var), " identifier.")]
+                $enum_var
+            ),*
+            ,
+            /// An identifier that is not recognized by this build.
+            Unknown(u8)
+        }
+
+        impl From<u8> for $enum_name {
+            fn from(x: u8) -> Self {
+                match x {
+                    $($enum_val => $enum_name::$enum_var),*
+                    , x => $enum_name::Unknown(x),
+                }
+            }
+        }
+
+        impl $enum_name {
+            #[allow(dead_code)]
+            /// Returns the numeric identifier observed on the wire.
+            pub fn value(self) -> u8 {
+                match self {
+                    $($enum_name::$enum_var => $enum_val),*
+                    ,$enum_name::Unknown(x) => x,
+                }
+            }
+        }
+
+        impl ::std::fmt::Display for $enum_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                match self {
+                    $( $enum_name::$enum_var => write!(f, stringify!($enum_var))),*
+                    ,$enum_name::Unknown(x) => {
+                        if identifier_is_grease!(u16::from(*x), $grease_policy) {
+                            write!(f, "GREASE ({x:#06x})")
+                        } else {
+                            write!(f, "Unknown ({x:#06x})")
+                        }
+                    },
+                }
+            }
+        }
+
+        impl ::serde::Serialize for $enum_name {
+            #[inline]
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: ::serde::Serializer,
+            {
+                serializer.collect_str(self)
+            }
+        }
+
+        impl_enum_deserialize!($enum_name, u8, $grease_policy, { $($enum_var),* });
+    };
+    (
+        $(#[$m:meta])*
+        @U16
+        $grease_policy:ident
+        $enum_vis:vis enum $enum_name:ident
+        { $( $(#[$enum_meta:meta])* $enum_var: ident => $enum_val: expr ),* $(,)? }
+    ) => {
+        $(#[$m])*
+        #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy)]
+        $enum_vis enum $enum_name {
+            $(
+                $(#[$enum_meta])*
+                #[doc = concat!("The registered ", stringify!($enum_var), " identifier.")]
+                $enum_var
+            ),*
+            ,
+            /// An identifier that is not recognized by this build.
+            Unknown(u16)
+        }
+
+        impl From<u16> for $enum_name {
+            fn from(x: u16) -> Self {
+                match x {
+                    $($enum_val => $enum_name::$enum_var),*
+                    , x => $enum_name::Unknown(x),
+                }
+            }
+        }
+
+        impl $enum_name {
+            #[allow(dead_code)]
+            /// Returns the numeric identifier observed on the wire.
+            pub fn value(self) -> u16 {
+                match self {
+                    $($enum_name::$enum_var => $enum_val),*
+                    ,$enum_name::Unknown(x) => x,
+                }
+            }
+        }
+
+        impl ::std::fmt::Display for $enum_name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+                match self {
+                    $( $enum_name::$enum_var => write!(f, stringify!($enum_var))),*
+                    ,$enum_name::Unknown(x) => {
+                        if identifier_is_grease!(*x, $grease_policy) {
+                            write!(f, "GREASE ({x:#06x})")
+                        } else {
+                            write!(f, "Unknown ({x:#06x})")
+                        }
+                    },
+                }
+            }
+        }
+
+        impl ::serde::Serialize for $enum_name {
+            #[inline]
+            fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+            where
+                S: ::serde::Serializer,
+            {
+                serializer.collect_str(self)
+            }
+        }
+
+        impl_enum_deserialize!($enum_name, u16, $grease_policy, { $($enum_var),* });
+
+    };
+}

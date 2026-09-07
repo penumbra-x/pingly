@@ -1,0 +1,111 @@
+//! Protocol data models and fingerprint parsers used by the pingly server.
+//!
+//! The crate parses TLS ClientHello captures, HTTP/1 message heads, HTTP/2 byte streams, decrypted
+//! HTTP/3 streams, and QUIC transport parameters. Its decoded structures support JSON round trips
+//! without discarding protocol data.
+//!
+//! Parsers operate on bytes supplied by the caller. They do not open sockets, reassemble TCP
+//! segments, or decrypt TLS and QUIC traffic.
+//!
+//! # TLS ClientHello
+//!
+//! [`tls::ClientHello::parse`] handles a complete ClientHello across one or more TLS records. For
+//! TCP chunks, append bytes to [`tls::ClientHelloBuffer`] and call
+//! `try_parse` until it returns a value.
+//!
+//! ```no_run
+//! use pingly::tls::ClientHello;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let record = std::fs::read("client-hello.bin")?;
+//! let hello = ClientHello::parse(&record)?;
+//! let ja3 = hello.ja3();
+//! let ja4 = hello.ja4();
+//!
+//! let json = serde_json::to_vec_pretty(&hello)?;
+//! let restored: ClientHello = serde_json::from_slice(&json)?;
+//! assert_eq!(restored.ja3(), ja3);
+//! assert_eq!(restored.ja4(), ja4);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # HTTP/1
+//!
+//! [h1::Http1HeadBuffer] captures arbitrary chunks without parsing fields, so validation and
+//! owned model construction can be moved off an I/O path. [h1::Http1Parser] parses immediately.
+//! Both preserve field order, original field-name casing, and field-value bytes.
+//!
+//! ```
+//! use pingly::h1::Http1HeadBuffer;
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let mut capture = Http1HeadBuffer::response();
+//!
+//! for chunk in b"HTTP/1.1 200 OK\r\nServer: pingly\r\n\r\n".chunks(9) {
+//!     capture.extend(chunk);
+//! }
+//!
+//! let response = capture
+//!     .parse()?
+//!     .into_response()
+//!     .ok_or_else(|| std::io::Error::other("capture did not contain an HTTP/1 response"))?;
+//! assert_eq!(response.status_code, 200);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # HTTP/2
+//!
+//! [`h2::parse_connection`] handles finite bytes beginning with the HTTP/2 client connection
+//! preface. [`h2::Http2Parser`] accepts arbitrary TCP chunks, while [`h2::parse_frames`] starts
+//! directly at a frame header.
+//!
+//! ```no_run
+//! use pingly::h2::{parse_connection, AkamaiFingerprint, Http2Fingerprint};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! let bytes = std::fs::read("http2-connection.bin")?;
+//! let frames = parse_connection(&bytes)?;
+//! let akamai = AkamaiFingerprint::from_frames(&frames);
+//! let h2 = Http2Fingerprint::from_frames(&frames);
+//!
+//! let json = serde_json::to_vec_pretty(&frames)?;
+//! let restored = serde_json::from_slice::<Vec<pingly::h2::Frame>>(&json)?;
+//! assert_eq!(AkamaiFingerprint::from_frames(&restored), akamai);
+//! assert_eq!(Http2Fingerprint::from_frames(&restored), h2);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # TCP
+//!
+//! [`tcp::TcpPacket::parse`] decodes one complete packet from a supported libpcap link-layer
+//! format. [`tcp::TcpFingerprint::from_initial_syn`] derives passive client fingerprints from the
+//! opening SYN packet. Stream reassembly and packet capture remain the caller's responsibility.
+//!
+//! # HTTP/3 and QUIC
+//!
+//! [`h3::Http3Parser`] accepts decrypted bytes from one HTTP/3 request stream or client-initiated
+//! unidirectional stream. It does not decrypt QUIC packets, and its stateless QPACK decoder rejects
+//! field sections that reference the dynamic table. [`quic::parse_transport_parameters`] decodes
+//! the QUIC parameters carried in a TLS ClientHello. See
+//! [RFC 9114](https://www.rfc-editor.org/rfc/rfc9114),
+//! [RFC 9204](https://www.rfc-editor.org/rfc/rfc9204), and
+//! [RFC 9001, Section 8.2](https://www.rfc-editor.org/rfc/rfc9001#section-8.2).
+
+#![deny(unused)]
+#![deny(unsafe_code)]
+#![deny(missing_docs)]
+#![warn(clippy::missing_errors_doc)]
+#![cfg_attr(test, deny(warnings))]
+
+#[macro_use]
+mod macros;
+
+pub mod h1;
+pub mod h2;
+pub mod h3;
+pub mod quic;
+pub mod tcp;
+pub mod tls;
